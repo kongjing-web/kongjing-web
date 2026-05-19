@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -7,55 +6,99 @@ import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import { 
   FaLayerGroup, FaEye, FaShare, FaHeart, FaMousePointer, 
-  FaChartBar, FaTrashAlt, FaEdit, FaUserCircle, FaChevronDown,
+  FaChartBar, FaTrashAlt, FaEdit, FaChevronDown,
   FaCoins, FaBell, FaBookOpen, FaHeadset, FaPaperPlane
 } from "react-icons/fa";
+
+// ==========================================================================
+// 后端配置中心
+// ==========================================================================
+const BASE_URL = "https://www.kongjing.online/api"; // 对应你的服务器域名，请根据 Python 路由自行调整后缀
 
 export default function App() {
   // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics'
   const [currentScreen, setCurrentScreen] = useState('home');
   // 当前正在被操作的卡片对象
   const [selectedCard, setSelectedCard] = useState(null);
+  // 卡片数据流（初始化为空，从后端动态加载）
+  const [cards, setCards] = useState([]);
+  // 全局加载状态
+  const [loading, setLoading] = useState(false);
 
-  // 初始化卡片数据
-  const [cards, setCards] = useState([
-    { 
-      id: 1, 
-      title: "探索世界 发现美好", 
-      status: "已发布", 
-      img: "https://picsum.photos/200/120?random=1",
-      content: "<p>这里是探索世界发现美好的原生卡片正文。包含精彩的导语和深度的行文解析。</p >",
-      buttons: [{ id: 101, text: "了解详情", url: "https://t.me" }, { id: 102, text: "加入频道", url: "https://t.me" }],
-      analytics: { views: 12500, shares: 3400, likes: 5600, clicks: 8900 }
-    },
-    { 
-      id: 2, 
-      title: "产品发布会邀请函", 
-      status: "草稿", 
-      img: "https://picsum.photos/200/120?random=2",
-      content: "<p>诚挚邀请您参加 2026 年度全生态新品线上发布会，点击下方按钮回执。</p >",
-      buttons: [{ id: 103, text: "在线预约", url: "https://t.me" }],
-      analytics: { views: 8200, shares: 1200, likes: 2100, clicks: 4300 }
-    },
-  ]);
-
-  const handleSaveCard = (savedCard) => {
-    const exists = cards.some(c => c.id === savedCard.id);
-    if (exists) {
-      setCards(cards.map(c => c.id === savedCard.id ? savedCard : c));
-    } else {
-      setCards([savedCard, ...cards]);
+  // 1. 从 Python 后端获取所有卡片列表
+  const fetchCards = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${BASE_URL}/cards`);
+      if (response.ok) {
+        const data = await response.json();
+        setCards(data);
+      } else {
+        console.error("加载卡片失败");
+      }
+    } catch (error) {
+      console.error("网络异常，无法连接到后端服务器:", error);
+    } finally {
+      setLoading(false);
     }
-    setCurrentScreen('home');
-    setSelectedCard(null);
+  };
+
+  // 页面加载时自动同步
+  useEffect(() => {
+    fetchCards();
+  }, []);
+
+  // 2. 保存或更新卡片（处理新建/编辑逻辑）
+  const handleSaveCard = async (savedCard) => {
+    setLoading(true);
+    const isEdit = cards.some(c => c.id === savedCard.id);
+    const url = isEdit ? `${BASE_URL}/cards/${savedCard.id}` : `${BASE_URL}/cards`;
+    const method = isEdit ? 'PUT' : 'POST';
+
+    try {
+      const response = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(savedCard)
+      });
+
+      if (response.ok) {
+        // 保存成功后，重新刷一遍后端最新数据，保证状态同步
+        await fetchCards();
+        setCurrentScreen('home');
+        setSelectedCard(null);
+      } else {
+        alert("存储失败，请检查 Python 后端服务。");
+      }
+    } catch (error) {
+      console.error("请求失败:", error);
+      alert("连接服务器失败，已为您在本地临时更新。");
+      // 降级容错：若后端挂了，本地依然假装成功以维持体验
+      if (isEdit) {
+        setCards(cards.map(c => c.id === savedCard.id ? savedCard : c));
+      } else {
+        setCards([savedCard, ...cards]);
+      }
+      setCurrentScreen('home');
+      setSelectedCard(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
+      {loading && (
+        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center text-xs text-white font-medium">
+          <div className="bg-slate-800 px-4 py-2 rounded-xl shadow-md">同步中...</div>
+        </div>
+      )}
+
       {currentScreen === 'home' && (
         <HomeScreen 
           cards={cards} 
           setCards={setCards}
+          fetchCards={fetchCards}
           onNavigateEditor={() => { setSelectedCard(null); setCurrentScreen('editor'); }} 
           onNavigateEditSpecific={(card) => { setSelectedCard(card); setCurrentScreen('editor'); }}
           onNavigatePreview={(card) => { setSelectedCard(card); setCurrentScreen('preview'); }}
@@ -91,7 +134,7 @@ export default function App() {
 /* ==========================================================================
    1. 首页组件 (HomeScreen)
    ========================================================================== */
-function HomeScreen({ cards, setCards, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics }) {
+function HomeScreen({ cards, setCards, fetchCards, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics }) {
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
@@ -102,17 +145,48 @@ function HomeScreen({ cards, setCards, onNavigateEditor, onNavigateEditSpecific,
     setActiveCardId(activeCardId === id ? null : id);
   };
 
-  const handleDeleteCard = (id) => {
+  // 物理删除：对接后端 API
+  const handleDeleteCard = async (id) => {
     if (window.confirm("确定要删除这张卡片并清除其所有链接和数据统计吗？")) {
-      setCards(cards.filter(c => c.id !== id));
-      setActiveCardId(null);
+      try {
+        const response = await fetch(`${BASE_URL}/cards/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+          setCards(cards.filter(c => c.id !== id));
+          setActiveCardId(null);
+        } else {
+          alert("后端删除失败");
+        }
+      } catch (error) {
+        console.error("删除失败:", error);
+        // 容错处理
+        setCards(cards.filter(c => c.id !== id));
+        setActiveCardId(null);
+      }
     }
   };
 
-  // 细节一修改：点击发布直接触发业务逻辑，不再跳转高仿聊天页面
-  const handlePublishToTelegram = (card) => {
-    // 预留位置：后续你可以在这里编写 axios.post('/api/publish', { cardId: card.id }) 
-    alert(`【正在发布】已捕获卡片："${card.title}"\n后端接口对接处：此处可直接编写代码让 Bot 发送此卡片给用户或频道。`);
+  // 核心功能：点击发布直接触发 Python 后端驱动 Bot
+  const handlePublishToTelegram = async (card) => {
+    try {
+      const response = await fetch(`${BASE_URL}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cardId: card.id,
+          botToken: "8732461104:AAHiXL_2QzqHFRg2zfdvews2J5RDW2KWieA", // 直接交给后端或由后端默认配置
+          botName: "kongjing_service_bot"
+        })
+      });
+      if (response.ok) {
+        alert(`【发布成功】已经向后端发出指令！\n您的 Bot (@kongjing_service_bot) 正在将卡片《${card.title}》推送到目标频道/用户。`);
+        fetchCards(); // 刷新列表，将卡片状态更新为“已发布”
+      } else {
+        alert("发布请求失败，请确保 Python 接口已正确部署。");
+      }
+    } catch (error) {
+      console.error("发布通信故障:", error);
+      alert(`【本地模拟发布】未连接到后端。发送的内容包含：\n标题: ${card.title}\n内嵌按钮数: ${card.buttons?.length}`);
+    }
   };
 
   useEffect(() => {
@@ -145,7 +219,6 @@ function HomeScreen({ cards, setCards, onNavigateEditor, onNavigateEditSpecific,
             </div>
           </div>
 
-          {/* 预留下拉项 */}
           {showUserMenu && (
             <div className="absolute left-0 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
               <button onClick={() => { alert('充值中心暂未开放'); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
@@ -184,51 +257,54 @@ function HomeScreen({ cards, setCards, onNavigateEditor, onNavigateEditSpecific,
           <span className="text-xs text-gray-400 font-bold px-2 py-1 bg-gray-100 rounded-lg">全部 {cards.length}</span>
         </div>
 
-        {/* 卡片列表栏一字排开五个操作按钮 */}
-        <div className="flex flex-col gap-3">
-          {cards.map((card) => {
-            const isExpanded = activeCardId === card.id;
-            return (
-              <div key={card.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
-                <div className="flex gap-4 p-3 cursor-pointer active:bg-gray-50/80 transition-colors" onClick={() => toggleCardActions(card.id)}>
-                  <img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
-                  <div className="flex-1 flex flex-col justify-between py-1">
-                    <p className="font-bold text-sm text-gray-800 line-clamp-2">{card.title || "未命名卡片"}</p >
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1"><FaEye /> {card.analytics.views}</span>
-                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === '已发布' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>{card.status}</span>
+        {cards.length === 0 ? (
+          <div className="text-center py-12 text-xs text-gray-400">暂无卡片数据，点击上方“原生卡片模式”创建一张吧</div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {cards.map((card) => {
+              const isExpanded = activeCardId === card.id;
+              return (
+                <div key={card.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
+                  <div className="flex gap-4 p-3 cursor-pointer active:bg-gray-50/80 transition-colors" onClick={() => toggleCardActions(card.id)}>
+                    <img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                    <div className="flex-1 flex flex-col justify-between py-1">
+                      <p className="font-bold text-sm text-gray-800 line-clamp-2">{card.title || "未命名卡片"}</p >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1"><FaEye /> {card.analytics?.views || 0}</span>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === '已发布' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>{card.status}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
-                  <button onClick={() => onNavigatePreview(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                    <FaEye size={11} className="text-gray-400" /> 预览
-                  </button>
-                  <button onClick={() => handlePublishToTelegram(card)} className="flex-1 text-center text-[11px] font-bold text-blue-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-blue-50/50 active:scale-95 transition-transform">
-                    <FaPaperPlane size={10} className="text-blue-400" /> 发布
-                  </button>
-                  <button onClick={() => onNavigateAnalytics(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                    <FaChartBar size={11} className="text-gray-400" /> 数据
-                  </button>
-                  <button onClick={() => onNavigateEditSpecific(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                    <FaEdit size={11} className="text-gray-400" /> 修改
-                  </button>
-                  <button onClick={() => handleDeleteCard(card.id)} className="flex-1 text-center text-[11px] font-bold text-red-500 flex items-center justify-center gap-1 hover:bg-red-50/40">
-                    <FaTrashAlt size={11} className="text-red-400" /> 删除
-                  </button>
+                  <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
+                    <button onClick={() => onNavigatePreview(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
+                      <FaEye size={11} className="text-gray-400" /> 预览
+                    </button>
+                    <button onClick={() => handlePublishToTelegram(card)} className="flex-1 text-center text-[11px] font-bold text-blue-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-blue-50/50 active:scale-95 transition-transform">
+                      <FaPaperPlane size={10} className="text-blue-400" /> 发布
+                    </button>
+                    <button onClick={() => onNavigateAnalytics(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
+                      <FaChartBar size={11} className="text-gray-400" /> 数据
+                    </button>
+                    <button onClick={() => onNavigateEditSpecific(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
+                      <FaEdit size={11} className="text-gray-400" /> 修改
+                    </button>
+                    <button onClick={() => handleDeleteCard(card.id)} className="flex-1 text-center text-[11px] font-bold text-red-500 flex items-center justify-center gap-1 hover:bg-red-50/40">
+                      <FaTrashAlt size={11} className="text-red-400" /> 删除
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 /* ==========================================================================
-   2. 原生卡片配置/高级内容编辑器 (EditorScreen) - 细节二：重构输入栏与弹出页面遮挡关联
+   2. 原生卡片配置/高级内容编辑器 (EditorScreen)
    ========================================================================== */
 function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [showMenu, setShowMenu] = useState(false);
@@ -239,11 +315,9 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { url: cardToEdit.img, type: 'image' } : null); 
   
   const fileInputRef = useRef(null);
-
   const emojiList = [
     "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓","🤗","🤔","🤭","🤫","🤥","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","👹","👺","🤡","💩","👻","💀","☠️","👽","👾","🤖","🎃","😺","😸","😹","😻","😼","😽","🙀","😾"
   ];
-
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: false, horizontalRule: false }),
@@ -257,6 +331,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     },
   });
 
+  // 处理图片或者视频文件（在生产环境下，此处可以改为直接把 File 上传至 Python 后端生成真实 URL）
   const handleMediaChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -270,7 +345,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     onPublish({
       id: cardToEdit ? cardToEdit.id : Date.now(),
       title: pureText.length > 0 ? pureText : "未命名 Telegram 原生卡片",
-      status: "已发布",
+      status: cardToEdit ? cardToEdit.status : "草稿", // 新建默认为草稿，在首页点击发布按钮后改为“已发布”
       content: editor.getHTML(),
       buttons: buttons,
       img: mediaFile?.url || "https://picsum.photos/200/120?random=" + Math.floor(Math.random() * 100),
@@ -310,7 +385,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const generateGrid = () => {
     const newBtns = [];
     for (let i = 0; i < (parseInt(gridConfig.rows) || 1) * (parseInt(gridConfig.cols) || 2); i++) {
-      newBtns.push({ id: Date.now() + i, text: `按钮 ${i + 1}`, url: '' });
+      newBtns.push({ id: Date.now() + i, text: `按钮 ${i + 1}`, url: 'https://t.me' });
     }
     setButtons(newBtns);
     setMenuView('main');
@@ -327,14 +402,12 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
 
   return (
     <div className="flex flex-col h-screen bg-[#E7EBF0] text-gray-800 max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
-      {/* 编辑器顶栏 */}
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
         <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
         <h1 className="text-sm font-bold text-gray-700">原生卡片配置</h1>
-        <button onClick={triggerPublish} className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md active:scale-95 transition-transform">保存发布</button>
+        <button onClick={triggerPublish} className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md active:scale-95 transition-transform">保存卡片</button>
       </div>
 
-      {/* 主体画布滚动区 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-80">
         <div className="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 relative">
           <div className="p-3 border-b border-gray-50 bg-slate-50/50 flex justify-between items-center">
@@ -347,7 +420,8 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
 
           {mediaFile && (
             <div className="w-full bg-black relative flex items-center justify-center max-h-[220px] overflow-hidden">
-              {mediaFile.type === 'video' ? <video src={mediaFile.url} controls className="w-full max-h-[220px] object-contain" /> : <img src={mediaFile.url} className="w-full max-h-[220px] object-contain" alt="" />}
+              {mediaFile.type === 'video' ? <video src={mediaFile.url} controls className="w-full max-h-[220px] object-contain" /> 
+              : <img src={mediaFile.url} className="w-full max-h-[220px] object-contain" alt="" />}
               <button onClick={() => setMediaFile(null)} className="absolute top-2 right-2 bg-black/60 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">✕</button>
             </div>
           )}
@@ -372,12 +446,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
         </div>
       </div>
 
-      {/* ==========================================================================
-         细节二重构：将输入控制栏与弹出菜单进行一体化垂直排列，确保菜单从输入栏下方/内部顶起时输入栏处于菜单上方
-         ========================================================================== */}
       <div className="absolute bottom-0 left-0 right-0 bg-white border-t flex flex-col z-40 shadow-2xl transition-all duration-300">
-        
-        {/* 输入控制条：此时不管菜单开闭，它都会顺理成章被顶在整个容器的上方 */}
         <div className="p-3 flex items-center gap-3 shrink-0 border-b border-gray-50">
           <div className="flex-1 bg-gray-100 rounded-full px-4 py-2 text-xs font-medium text-gray-400">
             {buttons.length > 0 ? `当前卡片已配置 ${buttons.length} 个底部矩阵按钮` : '点击右侧按钮配置卡片格式与底层矩阵...'}
@@ -391,7 +460,6 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
           </button>
         </div>
 
-        {/* 弹出菜单页面：点击“+”后向下平滑拉出空间，输入框始终完美悬浮在它上方 */}
         <div className={`transition-all duration-300 bg-white overflow-hidden ${showMenu ? 'h-[250px]' : 'h-0'}`}>
           {menuView === 'main' && (
             <div className="grid grid-cols-4 gap-y-4 p-4 overflow-y-auto h-full">
@@ -473,6 +541,7 @@ function PreviewScreen({ card, onBack }) {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         <div className="text-center text-xs text-gray-400 my-2">今天</div>
+        
         <div className="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
           {card.img && (
             <div className="w-full bg-black flex items-center justify-center">
@@ -485,7 +554,7 @@ function PreviewScreen({ card, onBack }) {
           {card.buttons && card.buttons.length > 0 && (
             <div className="p-2 border-t border-gray-50 bg-white grid gap-1.5" style={{ gridTemplateColumns: `repeat(${card.buttons.length > 1 ? 2 : 1}, 1fr)` }}>
               {card.buttons.map(btn => (
-                <a key={btn.id} href="#placeholder" onClick={(e) => e.preventDefault()} className="py-2 px-1 bg-[#F1F5F9] rounded-md text-center text-[13px] text-[#24A1DE] font-normal truncate block shadow-sm">
+                <a key={btn.id} href={btn.url || "#placeholder"} target="_blank" rel="noopener noreferrer" className="py-2 px-1 bg-[#F1F5F9] rounded-md text-center text-[13px] text-[#24A1DE] font-normal truncate block shadow-sm hover:bg-slate-100">
                   {btn.text}
                 </a>
               ))}
@@ -502,9 +571,8 @@ function PreviewScreen({ card, onBack }) {
    ========================================================================== */
 function AnalyticsScreen({ card, onBack }) {
   if (!card) return null;
-  const { views, shares, likes, clicks } = card.analytics;
+  const { views = 0, shares = 0, likes = 0, clicks = 0 } = card.analytics || {};
   const maxVal = Math.max(views, shares, likes, clicks, 1);
-
   return (
     <div className="flex flex-col h-screen bg-slate-50 max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
