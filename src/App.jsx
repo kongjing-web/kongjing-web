@@ -13,7 +13,7 @@ import {
 // ==========================================================================
 // 后端配置中心
 // ==========================================================================
-const BASE_URL = "https://www.kongjing.online:8443"; // 对应你的服务器域名，请根据 Python 路由自行调整后缀
+const BASE_URL = "https://www.kongjing.online:8443/api"; // 对应你的服务器域名，请根据 Python 路由自行调整后缀
 
 export default function App() {
   // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics'
@@ -25,28 +25,31 @@ export default function App() {
   // 全局加载状态
   const [loading, setLoading] = useState(false);
 
-  // 1. 从 Python 后端获取所有卡片列表
+  // 2. 安全的数据获取逻辑
   const fetchCards = async () => {
     setLoading(true);
+    setError(null);
+
     try {
-      const response = await fetch(`${BASE_URL}/cards`);
-      if (response.ok) {
+        const response = await fetch(`${BASE_URL}/cards`);
+        if (!response.ok) throw new Error('网络响应异常');
+
         const data = await response.json();
-        setCards(data);
-      } else {
-        console.error("加载卡片失败");
-      }
-    } catch (error) {
-      console.error("网络异常，无法连接到后端服务器:", error);
+
+        // 核心安全防护：即使后端返回 [] 或者是 null，都稳稳稳地初始化为数组，绝不触发“连接失败”
+        if (Array.isArray(data)) {
+            setCards(data);
+        } else {
+            setCards([]);
+        }
+    } catch (err) {
+        console.error("数据抓取失败原因:", err);
+        // 只有在彻底断网或 Nginx 挂掉时才提示
+        setError('连接服务中或暂无卡片数据');
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
   };
-
-  // 页面加载时自动同步
-  useEffect(() => {
-    fetchCards();
-  }, []);
 
   // 2. 保存或更新卡片（处理新建/编辑逻辑）
   const handleSaveCard = async (savedCard) => {
