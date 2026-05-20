@@ -51,41 +51,52 @@ export default function App() {
     }
   };
 
-  // 2. 保存或更新卡片（处理新建/编辑逻辑）
+  // 2. 保存或更新卡片（统一走后端的全自动容错 POST 接口）
   const handleSaveCard = async (savedCard) => {
     setLoading(true);
-    const isEdit = cards.some(c => c.id === savedCard.id);
-    const url = isEdit ? `${BASE_URL}/cards/${savedCard.id}` : `${BASE_URL}/cards`;
-    const method = isEdit ? 'PUT' : 'POST';
+
+    // 核心适配：将 buttons 数组转为后端需要的 JSON 字符串，防止 FastAPI 报 422 错误
+    const payload = {
+        ...savedCard,
+        id: savedCard.id ? String(savedCard.id) : null, // 确保 id 是字符串或 null
+        buttons: JSON.stringify(savedCard.buttons || [])
+    };
+
+    // 无论新建还是修改，统统 POST 到 /cards 接口，让后端自己去判断 exists
+    const url = `${BASE_URL}/cards`;
 
     try {
-      const response = await fetch(url, {
-        method: method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(savedCard)
-      });
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
 
-      if (response.ok) {
-        // 保存成功后，重新刷一遍后端最新数据，保证状态同步
-        await fetchCards();
+        if (response.ok) {
+            // 保存成功后，重新刷一遍后端最新数据，保证状态同步
+            await fetchCards();
+            setCurrentScreen('home');
+            setSelectedCard(null);
+        } else {
+            const errorData = await response.text();
+            console.error("后端返回错误:", errorData);
+            alert("存储失败，请检查 Python 后端服务或查看控制台报错。");
+        }
+    } catch (error) {
+        console.error("请求失败:", error);
+        alert("连接服务器失败，已为您在本地临时更新。");
+
+        // 降级容错保留
+        const isEdit = cards.some(c => c.id === savedCard.id);
+        if (isEdit) {
+            setCards(cards.map(c => c.id === savedCard.id ? savedCard : c));
+        } else {
+            setCards([savedCard, ...cards]);
+        }
         setCurrentScreen('home');
         setSelectedCard(null);
-      } else {
-        alert("存储失败，请检查 Python 后端服务。");
-      }
-    } catch (error) {
-      console.error("请求失败:", error);
-      alert("连接服务器失败，已为您在本地临时更新。");
-      // 降级容错：若后端挂了，本地依然假装成功以维持体验
-      if (isEdit) {
-        setCards(cards.map(c => c.id === savedCard.id ? savedCard : c));
-      } else {
-        setCards([savedCard, ...cards]);
-      }
-      setCurrentScreen('home');
-      setSelectedCard(null);
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
   };
 
