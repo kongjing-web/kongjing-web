@@ -13,7 +13,7 @@ import {
 // ==========================================================================
 // 后端配置中心
 // ==========================================================================
-const BASE_URL = "https://www.kongjing.online/api"; // 对应你的服务器域名，请根据 Python 路由自行调整后缀
+const BASE_URL = "https://www.kongjing.online:8443"; // 对应你的服务器域名，请根据 Python 路由自行调整后缀
 
 export default function App() {
   // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics'
