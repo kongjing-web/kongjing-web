@@ -36,15 +36,19 @@ export default function App() {
 
         console.log("后端返回的原始列表数据是:", data); // 打印出来看底细
 
+        // 🚀 终极防御：如果后端返回的是嵌套双重数组 [[...]]，直接帮它脱掉外壳！
+        let finalData = data;
+        if (Array.isArray(data) && data.length === 1 && Array.isArray(data[0])) {
+            finalData = data[0]; // 剥离最外层的 [ ]
+        }
+
         // 强效兼容各种后端格式
-        if (Array.isArray(data)) {
-            setCards(data);
-        } else if (data && Array.isArray(data.data)) {
-            // 兼容 {"code": 200, "data": [...]} 的格式
-            setCards(data.data);
-        } else if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-            // 兼容后端万一返回了单条数据对象，强行包成数组给首页 map 用
-            setCards([data]);
+        if (Array.isArray(finalData)) {
+            setCards(finalData);
+        } else if (finalData && Array.isArray(finalData.data)) {
+            setCards(finalData.data);
+        } else if (finalData && typeof finalData === 'object' && Object.keys(finalData).length > 0) {
+            setCards([finalData]);
         } else {
             setCards([]);
         }
