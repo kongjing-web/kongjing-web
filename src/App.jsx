@@ -25,26 +25,31 @@ export default function App() {
   // 全局加载状态
   const [loading, setLoading] = useState(false);
 
-  // 2. 安全的数据获取逻辑
+  // 2. 强效防御型的数据获取逻辑
   const fetchCards = async () => {
     setLoading(true);
     setError(null);
-
     try {
         const response = await fetch(`${BASE_URL}/cards`);
         if (!response.ok) throw new Error('网络响应异常');
-
         const data = await response.json();
 
-        // 核心安全防护：即使后端返回 [] 或者是 null，都稳稳稳地初始化为数组，绝不触发“连接失败”
+        console.log("后端返回的原始列表数据是:", data); // 打印出来看底细
+
+        // 强效兼容各种后端格式
         if (Array.isArray(data)) {
             setCards(data);
+        } else if (data && Array.isArray(data.data)) {
+            // 兼容 {"code": 200, "data": [...]} 的格式
+            setCards(data.data);
+        } else if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+            // 兼容后端万一返回了单条数据对象，强行包成数组给首页 map 用
+            setCards([data]);
         } else {
             setCards([]);
         }
     } catch (err) {
         console.error("数据抓取失败原因:", err);
-        // 只有在彻底断网或 Nginx 挂掉时才提示
         setError('连接服务中或暂无卡片数据');
     } finally {
         setLoading(false);
