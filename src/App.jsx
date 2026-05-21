@@ -60,52 +60,52 @@ export default function App() {
     }
   };
 
-  // 2. 保存或更新卡片（统一走后端的全自动容错 POST 接口）
-  const handleSaveCard = async (savedCard) => {
-    setLoading(true);
-
-    // 核心适配：将 buttons 数组转为后端需要的 JSON 字符串，防止 FastAPI 报 422 错误
-    const payload = {
-        ...savedCard,
-        id: savedCard.id ? String(savedCard.id) : null, // 确保 id 是字符串或 null
-        buttons: JSON.stringify(savedCard.buttons || [])
-    };
-
-    // 无论新建还是修改，统统 POST 到 /cards 接口，让后端自己去判断 exists
-    const url = `${BASE_URL}/cards`;
-
+  // 3. 完美防御型：卡片保存逻辑
+  const handleSaveCard = async (cardData) => {
     try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+      const isEditing = !!cardData.id;
+      const url = isEditing ? `${BASE_URL}/cards/${cardData.id}` : `${BASE_URL}/cards`;
+      
+      const payload = {
+        ...cardData,
+        buttons: typeof cardData.buttons === 'string' ? cardData.buttons : JSON.stringify(cardData.buttons || [])
+      };
 
-        if (response.ok) {
-            // 保存成功后，重新刷一遍后端最新数据，保证状态同步
-            await fetchCards();
-            setCurrentScreen('home');
-            setSelectedCard(null);
-        } else {
-            const errorData = await response.text();
-            console.error("后端返回错误:", errorData);
-            alert("存储失败，请检查 Python 后端服务或查看控制台报错。");
-        }
-    } catch (error) {
-        console.error("请求失败:", error);
-        alert("连接服务器失败，已为您在本地临时更新。");
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
-        // 降级容错保留
-        const isEdit = cards.some(c => c.id === savedCard.id);
-        if (isEdit) {
-            setCards(cards.map(c => c.id === savedCard.id ? savedCard : c));
-        } else {
-            setCards([savedCard, ...cards]);
+      // 🚀 核心改动：只要 response.ok (状态码 200/201)，就说明后端实打实地存进数据库了！
+      if (response.ok) {
+        // 我们尝试安全解析 JSON，如果后端给的是 "OK" 导致报错，直接忽略，强行通车！
+        try {
+            await response.json();
+        } catch (e) {
+            console.log("后端返回了非标准JSON（比如'OK'），已自动忽略并继续：", e);
         }
+
+        // 完美衔接：去刷新列表，并退回首页
+        await fetchCards();
         setCurrentScreen('home');
         setSelectedCard(null);
-    } finally {
-        setLoading(false);
+      } else {
+        throw new Error('服务器响应异常');
+      }
+
+    } catch (error) {
+      console.error("请求失败:", error);
+      alert("连接服务器失败，已为您在本地临时更新。");
+      
+      // 容错降轨：万一服务器彻底断开，本地临时充数
+      if (!cardData.id) {
+        const newCard = { ...cardData, id: 'LOCAL_' + Date.now(), views: 0, shares: 0, likes: 0, clicks: 0 };
+        setCards(prev => [newCard, ...prev]);
+      } else {
+        setCards(prev => prev.map(c => c.id === cardData.id ? cardData : c));
+      }
+      setCurrentScreen('home');
     }
   };
 
