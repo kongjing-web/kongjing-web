@@ -24,7 +24,7 @@ export default function App() {
   const [cards, setCards] = useState([]);
   // 全局加载状态
   const [loading, setLoading] = useState(false);
-
+  const [error, setError] = useState(null);
   // 2. 强效防御型的数据获取逻辑
   const fetchCards = async () => {
     setLoading(true);
