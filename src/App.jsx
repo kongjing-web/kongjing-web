@@ -16,21 +16,52 @@ import {
 const BASE_URL = "https://www.kongjing.online/api"; // 对应你的服务器域名，请根据 Python 路由自行调整后缀
 
 export default function App() {
-  // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics'
+  // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings'
   const [currentScreen, setCurrentScreen] = useState('home');
   // 当前正在被操作的卡片对象
   const [selectedCard, setSelectedCard] = useState(null);
   // 卡片数据流（初始化为空，从后端动态加载）
   const [cards, setCards] = useState([]);
+  // 当前 Telegram 登录用户信息
+  const [currentUser, setCurrentUser] = useState(null);
   // 全局加载状态
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [refreshingUser, setRefreshingUser] = useState(false);
+
+  const refreshCurrentUser = async () => {
+    if (!currentUser?.id) return;
+    setRefreshingUser(true);
+    try {
+      const response = await fetch(`${BASE_URL}/user/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: currentUser.id,
+          username: currentUser.username || ''
+        }),
+      });
+      if (!response.ok) return;
+      const userInfo = await response.json();
+      setCurrentUser(userInfo);
+    } catch (err) {
+      console.error('刷新用户信息失败:', err);
+    } finally {
+      setRefreshingUser(false);
+    }
+  };
+
   // 2. 强效防御型的数据获取逻辑
   const fetchCards = async () => {
+    if (!currentUser?.id) {
+      setCards([]);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-        const response = await fetch(`${BASE_URL}/cards`);
+        const url = `${BASE_URL}/cards?user_id=${currentUser.id}`;
+        const response = await fetch(url);
         if (!response.ok) throw new Error('网络响应异常');
         const data = await response.json();
 
@@ -60,6 +91,51 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    async function initTelegramUser() {
+      try {
+        const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        if (!telegramUser?.id) {
+          await fetchCards();
+          return;
+        }
+
+        const response = await fetch(`${BASE_URL}/user/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: telegramUser.id,
+            username: telegramUser.username || telegramUser.first_name || ''
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('用户登录失败');
+        }
+
+        const userInfo = await response.json();
+        setCurrentUser(userInfo);
+      } catch (err) {
+        console.error('Telegram 登录失败:', err);
+        await fetchCards();
+      }
+    }
+
+    initTelegramUser();
+  }, []);
+
+  useEffect(() => {
+    if (currentUser?.id) {
+      fetchCards();
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (currentScreen === 'home' && currentUser?.id) {
+      refreshCurrentUser();
+    }
+  }, [currentScreen, currentUser?.id]);
+
   // 3. 完美防御型：卡片保存逻辑
   const handleSaveCard = async (cardData) => {
     try {
@@ -68,6 +144,7 @@ export default function App() {
       
       const payload = {
         ...cardData,
+        user_id: currentUser?.id,
         buttons: typeof cardData.buttons === 'string' ? cardData.buttons : JSON.stringify(cardData.buttons || [])
       };
 
@@ -122,10 +199,24 @@ export default function App() {
           cards={cards} 
           setCards={setCards}
           fetchCards={fetchCards}
+          currentUser={currentUser}
           onNavigateEditor={() => { setSelectedCard(null); setCurrentScreen('editor'); }} 
           onNavigateEditSpecific={(card) => { setSelectedCard(card); setCurrentScreen('editor'); }}
           onNavigatePreview={(card) => { setSelectedCard(card); setCurrentScreen('preview'); }}
           onNavigateAnalytics={(card) => { setSelectedCard(card); setCurrentScreen('analytics'); }}
+          onNavigateRecharge={() => { setCurrentScreen('recharge'); setSelectedCard(null); }}
+          onNavigateSettings={() => { setCurrentScreen('settings'); setSelectedCard(null); }}
+        />
+      )}
+
+      {currentScreen === 'recharge' && (
+        <RechargeScreen currentUser={currentUser} onBack={() => setCurrentScreen('home')} onRefreshUser={refreshCurrentUser} />
+      )}
+      {currentScreen === 'settings' && (
+        <SettingsScreen
+          currentUser={currentUser}
+          onBack={() => setCurrentScreen('home')}
+          onSave={(userInfo) => { setCurrentUser(userInfo); setCurrentScreen('home'); }}
         />
       )}
       
@@ -157,12 +248,14 @@ export default function App() {
 /* ==========================================================================
    1. 首页组件 (HomeScreen)
    ========================================================================== */
-function HomeScreen({ cards, setCards, fetchCards, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics }) {
+function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings }) {
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
 
-  const wxUsername = "水中的观景房";
+  const wxUsername = currentUser?.username || "匿名用户";
+  const wxRole = currentUser ? (currentUser.role === 'superuser' ? '超级管理员' : '普通用户') : '未登录';
+  const vipStatus = currentUser?.vip_until && Number(currentUser.vip_until) > Math.floor(Date.now() / 1000) ? 'VIP 有效' : (currentUser ? '普通用户' : '未登录');
 
   const toggleCardActions = (id) => {
     setActiveCardId(activeCardId === id ? null : id);
@@ -195,9 +288,7 @@ function HomeScreen({ cards, setCards, fetchCards, onNavigateEditor, onNavigateE
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          cardId: card.id,
-          botToken: "8732461104:AAHiXL_2QzqHFRg2zfdvews2J5RDW2KWieA", // 直接交给后端或由后端默认配置
-          botName: "kongjing_service_bot"
+          cardId: card.id
         })
       });
       if (response.ok) {
@@ -238,13 +329,13 @@ function HomeScreen({ cards, setCards, fetchCards, onNavigateEditor, onNavigateE
               <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
                 {wxUsername} <FaChevronDown size={8} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
               </span>
-              <span className="text-[9px] text-green-500 font-medium">微信已授权</span>
+              <span className="text-[9px] text-green-500 font-medium">{wxRole} · {vipStatus}</span>
             </div>
           </div>
 
           {showUserMenu && (
             <div className="absolute left-0 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-              <button onClick={() => { alert('充值中心暂未开放'); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
+              <button onClick={() => { onNavigateRecharge(); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
                 <FaCoins className="text-amber-500" /> 充值页面
               </button>
               <button onClick={() => { alert('消息中心暂未开放'); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
@@ -252,6 +343,9 @@ function HomeScreen({ cards, setCards, fetchCards, onNavigateEditor, onNavigateE
               </button>
               <button onClick={() => { alert('请查阅开发文档使用说明'); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
                 <FaBookOpen className="text-purple-500" /> 使用说明
+              </button>
+              <button onClick={() => { onNavigateSettings(); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
+                <FaLayerGroup className="text-indigo-500" /> 设置
               </button>
               <div className="h-px bg-gray-100 my-1 mx-2"></div>
               <button onClick={() => { alert('正在呼叫客服'); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
@@ -261,6 +355,28 @@ function HomeScreen({ cards, setCards, fetchCards, onNavigateEditor, onNavigateE
           )}
         </div>
         <div className="text-right"><span className="text-[10px] bg-slate-100 font-bold text-slate-500 px-2 py-1 rounded-md">Console v1.2</span></div>
+      </div>
+      <div className="bg-slate-50 px-4 pb-4">
+        <div className="bg-gradient-to-r from-slate-900 via-slate-700 to-slate-950 rounded-3xl p-4 shadow-lg text-white border border-slate-800/20">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-2">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-300">当前登录用户</p>
+              <h2 className="text-lg font-bold">{wxUsername || '匿名用户'}</h2>
+              <p className="text-sm text-slate-200">{wxRole} · {vipStatus}</p>
+            </div>
+            <div className="text-right text-xs text-slate-300">
+              <p>Telegram ID</p>
+              <p className="font-semibold text-white truncate max-w-[120px]">{currentUser?.id || '未登录'}</p>
+            </div>
+          </div>
+          {currentUser?.bot_username ? (
+            <div className="mt-4 rounded-2xl bg-white/10 p-3 text-[12px] text-slate-100">
+              专属 Bot：@{currentUser.bot_username}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-2xl bg-white/10 p-3 text-[12px] text-slate-200">当前尚未绑定专属 Bot</div>
+          )}
+        </div>
       </div>
 
       <div className="p-4 pb-12">
@@ -326,6 +442,199 @@ function HomeScreen({ cards, setCards, fetchCards, onNavigateEditor, onNavigateE
   );
 }
 
+function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [payUrl, setPayUrl] = useState(null);
+
+  const handleCreateInvoice = async () => {
+    if (!currentUser?.id) {
+      alert('请先完成 Telegram 登录');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telegram_id: currentUser.id })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || '创建发票失败');
+      }
+      const data = await response.json();
+      const openUrl = data.pay_url || data.payUrl || data.url || data.payment_url;
+      setPayUrl(openUrl);
+      if (openUrl) {
+        if (window.Telegram?.WebApp?.openLink) {
+          window.Telegram.WebApp.openLink(openUrl);
+        } else {
+          window.open(openUrl, '_blank');
+        }
+      }
+      if (onRefreshUser) {
+        let attempts = 0;
+        const intervalId = setInterval(async () => {
+          attempts += 1;
+          await onRefreshUser();
+          if (attempts >= 12) {
+            clearInterval(intervalId);
+          }
+        }, 5000);
+      }
+    } catch (err) {
+      console.error('创建发票失败:', err);
+      setError(err.message || '创建支付链接失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
+      <div className="sticky top-0 w-full bg-white border-b border-gray-100 px-4 py-3 z-40 shadow-sm flex items-center justify-between">
+        <button onClick={onBack} className="text-sm font-bold text-gray-700">← 返回</button>
+        <span className="text-sm font-bold text-gray-800">会员充值</span>
+        <div className="w-8" />
+      </div>
+      <div className="p-4 space-y-4">
+        <div className="bg-white rounded-3xl border border-gray-200 p-5 shadow-sm">
+          <h2 className="text-lg font-bold text-gray-900">2美元/周 VIP</h2>
+          <p className="mt-3 text-sm text-gray-500 leading-6">开通后可绑定专属 Bot，解除非会员每月 5 张卡片发布限制，享受无限发布权限。</p>
+          <ul className="mt-4 space-y-3 text-sm text-gray-600">
+            <li>• 自定义专属 Bot</li>
+            <li>• 无限次卡片发布</li>
+            <li>• 专属 VIP 计费与优惠</li>
+          </ul>
+          {currentUser && (
+            <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
+              当前用户：{currentUser.username || currentUser.telegram_id} / {currentUser.role === 'superuser' ? '超级管理员' : '普通用户'}
+            </div>
+          )}
+          {error && <div className="mt-4 text-sm text-red-500">{error}</div>}
+          <button
+            onClick={handleCreateInvoice}
+            disabled={loading}
+            className="mt-6 w-full rounded-2xl bg-amber-500 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-amber-300"
+          >
+            {loading ? '生成支付链接...' : '立即用 USDT 支付'}
+          </button>
+          {payUrl && (
+            <div className="mt-4 text-sm text-gray-600">已生成支付链接，若未自动打开请重新点击“立即用 USDT 支付”。</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsScreen({ currentUser, onBack, onSave }) {
+  const [botToken, setBotToken] = useState(currentUser?.bot_token || '');
+  const [language, setLanguage] = useState(currentUser?.language || 'zh');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  const isVip = currentUser?.role === 'superuser' || (currentUser?.vip_until && Number(currentUser.vip_until) > Math.floor(Date.now() / 1000));
+  const botInputDisabled = !isVip;
+
+  const handleSave = async () => {
+    if (!currentUser?.id) {
+      alert('请先完成 Telegram 登录');
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const payload = {
+        user_id: currentUser.id,
+        language,
+      };
+      if (!botInputDisabled) {
+        payload.bot_token = botToken;
+      }
+
+      const response = await fetch(`${BASE_URL}/user/update_settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || '保存设置失败');
+      }
+      const result = await response.json();
+      setMessage('设置已保存');
+      onSave(result);
+    } catch (err) {
+      console.error('保存设置失败:', err);
+      setMessage(err.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
+      <div className="sticky top-0 w-full bg-white border-b border-gray-100 px-4 py-3 z-40 shadow-sm flex items-center justify-between">
+        <button onClick={onBack} className="text-sm font-bold text-gray-700">← 返回</button>
+        <span className="text-sm font-bold text-gray-800">设置</span>
+        <div className="w-8" />
+      </div>
+      <div className="p-4 space-y-4">
+        <div className="bg-white rounded-3xl border border-gray-200 p-5 shadow-sm">
+          <h2 className="text-lg font-bold text-gray-900">账号设置</h2>
+          <p className="mt-2 text-sm text-gray-500">在此处绑定您的专属 Bot，并选择界面语言。</p>
+
+          <div className="mt-6 space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-2">Bot 密钥设置</label>
+              <input
+                type="text"
+                value={botToken}
+                onChange={(e) => setBotToken(e.target.value)}
+                disabled={botInputDisabled}
+                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100"
+                placeholder="请输入专属 Bot Token"
+              />
+              {!isVip && (
+                <p className="mt-2 text-xs text-red-500">仅限会员使用专属Bot</p>
+              )}
+              {currentUser?.bot_username && (
+                <p className="mt-2 text-xs text-slate-500">当前绑定 Bot：@{currentUser.bot_username}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-2">语言设置</label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400"
+              >
+                <option value="zh">简体中文</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+          </div>
+
+          {message && <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">{message}</div>}
+
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="mt-6 w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+          >
+            {saving ? '保存中...' : '保存设置'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ==========================================================================
    2. 原生卡片配置/高级内容编辑器 (EditorScreen)
    ========================================================================== */
@@ -366,9 +675,9 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     if (!editor) return;
     const pureText = editor.getText().trim();
     onPublish({
-      id: cardToEdit ? cardToEdit.id : Date.now(),
+      id: cardToEdit ? cardToEdit.id : null,
       title: pureText.length > 0 ? pureText : "未命名 Telegram 原生卡片",
-      status: cardToEdit ? cardToEdit.status : "草稿", // 新建默认为草稿，在首页点击发布按钮后改为“已发布”
+      status: cardToEdit ? cardToEdit.status : "草稿",
       content: editor.getHTML(),
       buttons: buttons,
       img: mediaFile?.url || "https://picsum.photos/200/120?random=" + Math.floor(Math.random() * 100),

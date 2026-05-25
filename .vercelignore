@@ -1,0 +1,4 @@
+# 告诉 Vercel，这些文件夹的变动请直接忽略，不要触发构建
+backend/
+nginx/
+server/
