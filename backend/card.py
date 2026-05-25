@@ -113,13 +113,19 @@ def get_cards(user_id: Optional[str] = None):
     
     result = []
     for row in rows:
+        try:
+            parsed_buttons = json.loads(row[5] or "[]")
+        except Exception:
+            parsed_buttons = []
+
         result.append({
             "id": row[0],
             "title": row[1],
             "status": row[2],
             "img": row[3],
+            "image": row[3],
             "content": row[4],
-            "buttons": row[5],
+            "buttons": parsed_buttons,
             "user_id": row[10],
             "analytics": {
                 "views": row[6],
@@ -192,26 +198,25 @@ def publish_card(data: dict):
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT title, content, img, buttons, user_id FROM cards WHERE id = ?", (card_id,))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="卡片未找到")
+    try:
+        cursor.execute("SELECT title, content, img, buttons, user_id FROM cards WHERE id = ?", (card_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="卡片未找到")
 
-    title, content, img, buttons_raw, user_id = row
-    if not user_id:
-        conn.close()
-        raise HTTPException(status_code=400, detail="卡片未绑定用户")
+        title, content, img, buttons_raw, user_id = row
+        if not user_id:
+            raise HTTPException(status_code=400, detail="卡片未绑定用户")
 
-    cursor.execute("SELECT telegram_id, bot_token, role, vip_until, monthly_published_count, last_reset_month FROM users WHERE telegram_id = ?", (user_id,))
-    user_row = cursor.fetchone()
-    if not user_row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="未找到卡片所属用户")
+        cursor.execute("SELECT telegram_id, bot_token, role, vip_until, monthly_published_count, last_reset_month FROM users WHERE telegram_id = ?", (user_id,))
+        user_row = cursor.fetchone()
+        if not user_row:
+            raise HTTPException(status_code=404, detail="未找到卡片所属用户")
 
-    chat_id, user_bot_token, role, vip_until, monthly_published_count, last_reset_month = user_row
-    bot_token = user_bot_token if user_bot_token else BOT_TOKEN
-    conn.close()
+        chat_id, user_bot_token, role, vip_until, monthly_published_count, last_reset_month = user_row
+        bot_token = user_bot_token if user_bot_token else BOT_TOKEN
+    finally:
+        conn.close()
 
     now_ts = int(time.time())
     current_month = datetime.utcfromtimestamp(now_ts).strftime('%Y-%m')
@@ -256,28 +261,33 @@ def publish_card(data: dict):
     clean_content = re.sub(r'<p\s*>', '', content or '')
     clean_content = re.sub(r'</p\s*>', '\n', clean_content)
     telegram_api_base = f"https://api.telegram.org/bot{bot_token}"
-    if img:
-        payload = {
-            "chat_id": chat_id,
-            "photo": img,
-            "caption": f"{title}\n\n{clean_content}",
-            "parse_mode": "HTML"
-        }
-        if reply_markup:
-            payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-        response = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
-    else:
-        payload = {
-            "chat_id": chat_id,
-            "text": f"{title}\n\n{clean_content}",
-            "parse_mode": "HTML"
-        }
-        if reply_markup:
-            payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-        response = requests.post(f"{telegram_api_base}/sendMessage", json=payload, timeout=15)
+
+    try:
+        if img:
+            payload = {
+                "chat_id": chat_id,
+                "photo": img,
+                "caption": f"{title}\n\n{clean_content}",
+                "parse_mode": "HTML"
+            }
+            if reply_markup:
+                payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+            response = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
+        else:
+            payload = {
+                "chat_id": chat_id,
+                "text": f"{title}\n\n{clean_content}",
+                "parse_mode": "HTML"
+            }
+            if reply_markup:
+                payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+            response = requests.post(f"{telegram_api_base}/sendMessage", json=payload, timeout=15)
+    except requests.RequestException as err:
+        raise HTTPException(status_code=502, detail=f"Telegram 推送失败，网络异常: {err}")
 
     if not response.ok:
-        raise HTTPException(status_code=502, detail=f"Telegram API 调用失败: {response.text}")
+        error_text = response.text or 'unknown error'
+        raise HTTPException(status_code=502, detail=f"Telegram 推送失败，请确保您已在TG中对该Bot点击过‘启动(Start)’。错误信息: {error_text}")
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -510,14 +520,20 @@ def get_card(card_id: str):
     
     if not row:
         raise HTTPException(status_code=404, detail="卡片未找到")
-        
+
+    try:
+        parsed_buttons = json.loads(row[5] or "[]")
+    except Exception:
+        parsed_buttons = []
+
     return {
         "id": row[0],
         "title": row[1],
         "status": row[2],
         "img": row[3],
+        "image": row[3],
         "content": row[4],
-        "buttons": row[5],
+        "buttons": parsed_buttons,
         "analytics": {
             "views": row[6],
             "shares": row[7],

@@ -94,18 +94,24 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function waitForTelegramWebApp() {
-      let tries = 0;
-      while (tries < 20 && !window.Telegram?.WebApp) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        tries += 1;
-      }
-      return window.Telegram?.WebApp;
-    }
-
     async function initTelegramUser() {
       try {
-        const tg = await waitForTelegramWebApp();
+        let tg = null;
+        let telegramUser = null;
+        const maxRetries = 30;
+        let tries = 0;
+
+        while (tries < maxRetries) {
+          const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+          tg = window.Telegram?.WebApp;
+          telegramUser = tgUser;
+          if (telegramUser?.id) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          tries += 1;
+        }
+
         if (tg) {
           try {
             tg.ready?.();
@@ -119,13 +125,8 @@ export default function App() {
           }
         }
 
-        const telegramUser = tg?.initDataUnsafe?.user;
         if (!telegramUser?.id) {
-          if (!tg) {
-            setCurrentUser({ id: '123456789', username: '浏览器测试用户', role: 'user' });
-            return;
-          }
-          await fetchCards();
+          setCurrentUser({ id: '123456789', username: '浏览器测试用户', role: 'user' });
           return;
         }
 
@@ -133,8 +134,8 @@ export default function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            id: telegramUser.id,
-            username: telegramUser.username || telegramUser.first_name || ''
+            id: telegramUser.id.toString(),
+            username: telegramUser.username || 'TG用户'
           }),
         });
 
@@ -179,9 +180,12 @@ export default function App() {
       const url = isEditing ? `${BASE_URL}/cards/${cardData.id}` : `${BASE_URL}/cards`;
       
       const payload = {
-        ...cardData,
-        user_id: currentUser?.id,
-        buttons: typeof cardData.buttons === 'string' ? cardData.buttons : JSON.stringify(cardData.buttons || [])
+        id: cardData.id ?? selectedCard?.id ?? undefined,
+        title: cardData.title ?? '',
+        content: cardData.content ?? '',
+        img: cardData.img ?? '',
+        buttons: typeof cardData.buttons === 'string' ? cardData.buttons : JSON.stringify(cardData.buttons || []),
+        user_id: currentUser?.id?.toString()
       };
 
       const response = await fetch(url, {
