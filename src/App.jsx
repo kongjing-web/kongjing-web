@@ -13,7 +13,7 @@ import {
 // ==========================================================================
 // 后端配置中心
 // ==========================================================================
-const BASE_URL = "https://www.kongjing.online/api"; // 对应你的服务器域名，请根据 Python 路由自行调整后缀
+const BASE_URL = "https://www.kongjing.online/api".replace(/\/+$/, ""); // 去除尾部斜杠，避免拼接时出现 //api//user
 
 export default function App() {
   // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings'
@@ -652,7 +652,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   ];
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ heading: false, horizontalRule: false }),
+      StarterKit.configure({ heading: false, horizontalRule: false, link: false, underline: false }),
       Underline,
       Link.configure({ openOnClick: false, HTMLAttributes: { class: 'text-blue-500 underline pointer-events-none' } }),
       Placeholder.configure({ placeholder: '输入卡片正文内容...' }),
