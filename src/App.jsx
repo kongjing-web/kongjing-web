@@ -92,10 +92,39 @@ export default function App() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function waitForTelegramWebApp() {
+      let tries = 0;
+      while (tries < 20 && !window.Telegram?.WebApp) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        tries += 1;
+      }
+      return window.Telegram?.WebApp;
+    }
+
     async function initTelegramUser() {
       try {
-        const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        const tg = await waitForTelegramWebApp();
+        if (tg) {
+          try {
+            tg.ready?.();
+          } catch (err) {
+            console.warn('Telegram ready() 调用失败', err);
+          }
+          try {
+            tg.expand?.();
+          } catch (err) {
+            console.warn('Telegram expand() 调用失败', err);
+          }
+        }
+
+        const telegramUser = tg?.initDataUnsafe?.user;
         if (!telegramUser?.id) {
+          if (!tg) {
+            setCurrentUser({ id: '123456789', username: '浏览器测试用户', role: 'user' });
+            return;
+          }
           await fetchCards();
           return;
         }
@@ -114,14 +143,21 @@ export default function App() {
         }
 
         const userInfo = await response.json();
-        setCurrentUser(userInfo);
+        if (!cancelled) {
+          setCurrentUser(userInfo);
+        }
       } catch (err) {
         console.error('Telegram 登录失败:', err);
-        await fetchCards();
+        if (!cancelled) {
+          setCurrentUser({ id: '123456789', username: '浏览器测试用户', role: 'user' });
+        }
       }
     }
 
     initTelegramUser();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
