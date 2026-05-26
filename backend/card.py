@@ -1,21 +1,27 @@
 import os
 import json
-import sqlite3
 import random
 import re
+import shutil
 import string
+import subprocess
 import time
+import traceback
+import uuid
 import requests
+from contextlib import contextmanager
 from functools import partial
+from typing import List, Optional, Union, Any
 from urllib.parse import quote_plus
 from datetime import datetime
-from pydantic import BaseModel
-from typing import List, Optional, Union, Any
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
+from PIL import Image, ImageSequence
+import psycopg2
+
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心")
 
 # 允许跨域请求
@@ -29,67 +35,371 @@ app.add_middleware(
 
 BOT_TOKEN = "8732461104:AAHiXL_2QzqHFRg2zfdvews2J5RDW2KWieA"
 CRYPTOBOT_TOKEN = "586003:AA8fUwUV0Y6cC0GBRUWtiJO9todPsTaKKKs"
-DB_FILE = "kongjing.db"
+DB_CONFIG = {
+    "dbname": "kongjing_db",
+    "user": "postgres",
+    "password": "741858",
+    "host": "127.0.0.1",
+    "port": 5432,
+}
 API_BASE_URL = "https://www.kongjing.online/api"
-UPLOAD_DIR = "/root/card_system/uploads"
+UPLOAD_DIR = "/var/www/kongjing/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+@contextmanager
+def get_db_connection():
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+    try:
+        yield conn, cursor
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def _get_existing_columns(cursor, table_name: str):
+    cursor.execute(
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = %s AND table_schema = 'public'
+        """,
+        (table_name,),
+    )
+    return {row[0] for row in cursor.fetchall()}
+
 
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            telegram_id TEXT PRIMARY KEY,
-            username TEXT,
-            role TEXT DEFAULT 'user',
-            vip_until INTEGER DEFAULT 0,
-            bot_token TEXT,
-            bot_username TEXT,
-            language TEXT DEFAULT 'zh',
-            monthly_published_count INTEGER DEFAULT 0,
-            last_reset_month TEXT
+    with get_db_connection() as (_, cursor):
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                telegram_id TEXT UNIQUE,
+                username TEXT,
+                role TEXT DEFAULT 'user',
+                vip_until INTEGER DEFAULT 0,
+                balance REAL DEFAULT 0,
+                monthly_published_count INTEGER DEFAULT 0,
+                last_reset_month TEXT,
+                bot_token TEXT DEFAULT '',
+                bot_username TEXT DEFAULT '',
+                language TEXT DEFAULT 'zh'
+            )
+            """
         )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS cards (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            status TEXT,
-            img TEXT,
-            content TEXT,
-            buttons TEXT,
-            views INTEGER DEFAULT 0,
-            shares INTEGER DEFAULT 0,
-            likes INTEGER DEFAULT 0,
-            clicks INTEGER DEFAULT 0,
-            user_id TEXT
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cards (
+                id TEXT PRIMARY KEY,
+                user_id TEXT,
+                title TEXT,
+                status TEXT,
+                media_type TEXT DEFAULT 'photo',
+                local_media_url TEXT,
+                tg_file_id TEXT,
+                content TEXT,
+                buttons TEXT,
+                views INTEGER DEFAULT 0,
+                shares INTEGER DEFAULT 0,
+                likes INTEGER DEFAULT 0,
+                clicks INTEGER DEFAULT 0,
+                img TEXT
+            )
+            """
         )
-    ''')
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'zh'")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute("ALTER TABLE cards ADD COLUMN user_id TEXT")
-    except sqlite3.OperationalError:
-        pass
-    conn.commit()
-    conn.close()
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id TEXT PRIMARY KEY,
+                user_id TEXT,
+                amount REAL,
+                status TEXT DEFAULT 'pending',
+                crypto_invoice_id TEXT,
+                pay_url TEXT
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS media_cache (
+                local_url TEXT PRIMARY KEY,
+                file_id TEXT,
+                media_type TEXT,
+                created_at INTEGER
+            )
+            """
+        )
+
+        users_columns = _get_existing_columns(cursor, "users")
+        for name, metadata in {
+            "id": "TEXT",
+            "telegram_id": "TEXT UNIQUE",
+            "username": "TEXT",
+            "role": "TEXT DEFAULT 'user'",
+            "vip_until": "INTEGER DEFAULT 0",
+            "balance": "REAL DEFAULT 0",
+            "monthly_published_count": "INTEGER DEFAULT 0",
+            "last_reset_month": "TEXT",
+            "bot_token": "TEXT DEFAULT ''",
+            "bot_username": "TEXT DEFAULT ''",
+            "language": "TEXT DEFAULT 'zh'",
+        }.items():
+            if name not in users_columns:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {name} {metadata}")
+
+        if "id" in users_columns and "telegram_id" in users_columns:
+            cursor.execute(
+                """
+                UPDATE users SET id = telegram_id WHERE id IS NULL OR id = ''
+                """
+            )
+
+        cards_columns = _get_existing_columns(cursor, "cards")
+        for name, metadata in {
+            "user_id": "TEXT",
+            "media_type": "TEXT DEFAULT 'photo'",
+            "local_media_url": "TEXT",
+            "tg_file_id": "TEXT",
+            "img": "TEXT",
+        }.items():
+            if name not in cards_columns:
+                cursor.execute(f"ALTER TABLE cards ADD COLUMN IF NOT EXISTS {name} {metadata}")
+
+        if "telegram_id" in users_columns:
+            cursor.execute(
+                """
+                UPDATE users SET id = telegram_id WHERE (id IS NULL OR id = '') AND telegram_id IS NOT NULL
+                """
+            )
+
 
 init_db()
+
+def _sanitize_filename(filename: str) -> str:
+    name = os.path.basename(filename)
+    name = re.sub(r'[^A-Za-z0-9_.-]', '_', name)
+    return name or f"upload_{uuid.uuid4().hex[:8]}"
+
+
+def _infer_media_type(source: str) -> str:
+    lower = (source or "").lower()
+    if lower.endswith('.gif'):
+        return 'gif'
+    if lower.endswith('.mp4') or lower.endswith('.mov'):
+        return 'video'
+    if lower.endswith('.jpg') or lower.endswith('.jpeg') or lower.endswith('.png'):
+        return 'photo'
+    return 'photo'
+
+
+def _compress_image(input_path: str, output_path: str):
+    with Image.open(input_path) as img:
+        if img.mode not in ('RGB', 'RGBA'):
+            img = img.convert('RGB')
+        width, height = img.size
+        max_dim = 1280
+        if max(width, height) > max_dim:
+            ratio = max_dim / max(width, height)
+            img = img.resize((int(width * ratio), int(height * ratio)), Image.LANCZOS)
+        img.save(output_path, optimize=True, quality=75)
+        if os.path.getsize(output_path) > 600 * 1024:
+            img.save(output_path, optimize=True, quality=65)
+    return output_path
+
+
+def _compress_gif(input_path: str, output_path: str):
+    with Image.open(input_path) as gif:
+        frames = []
+        durations = []
+        for frame in ImageSequence.Iterator(gif):
+            frame = frame.convert('P', palette=Image.ADAPTIVE)
+            frames.append(frame)
+            durations.append(frame.info.get('duration', 100))
+        if len(frames) > 24:
+            frames = frames[::2]
+            durations = durations[::2]
+        first, rest = frames[0], frames[1:]
+        first.save(
+            output_path,
+            save_all=True,
+            append_images=rest,
+            optimize=True,
+            loop=0,
+            duration=durations,
+            disposal=2,
+        )
+    return output_path
+
+
+def _compress_video(input_path: str, output_path: str):
+    command = [
+        'ffmpeg',
+        '-y',
+        '-i', input_path,
+        '-c:v', 'libx264',
+        '-profile:v', 'baseline',
+        '-level', '3.1',
+        '-pix_fmt', 'yuv420p',
+        '-preset', 'medium',
+        '-crf', '28',
+        '-vf', "scale='min(1280,iw)':'min(720,ih)'",
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-movflags', '+faststart',
+        output_path,
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise RuntimeError(f"ffmpeg 压缩失败: {completed.stderr.strip()}")
+    return output_path
+
+
+def _build_upload_urls(filename: str) -> str:
+    return f"https://www.kongjing.online/uploads/{filename}"
+
+
+def _merge_and_compress_chunks(upload_id: str, filename: str, total_chunks: int) -> str:
+    chunk_dir = os.path.join(UPLOAD_DIR, 'tmp', _sanitize_filename(upload_id))
+    if not os.path.isdir(chunk_dir):
+        raise FileNotFoundError(f"上传 ID 对应的临时目录不存在: {chunk_dir}")
+
+    ext = os.path.splitext(filename)[1].lower() or '.bin'
+    merged_path = os.path.join(chunk_dir, f"merged{ext}")
+    with open(merged_path, 'wb') as merged_file:
+        for index in range(total_chunks):
+            chunk_path = os.path.join(chunk_dir, f"chunk_{index}.part")
+            if not os.path.exists(chunk_path):
+                raise FileNotFoundError(f"缺失分片: {chunk_path}")
+            with open(chunk_path, 'rb') as chunk_file:
+                shutil.copyfileobj(chunk_file, merged_file)
+
+    final_ext = '.mp4' if ext in ['.mov', '.mp4'] else ext
+    final_filename = f"{int(time.time())}_{uuid.uuid4().hex[:10]}{final_ext}"
+    final_path = os.path.join(UPLOAD_DIR, final_filename)
+
+    try:
+        if ext in ['.jpg', '.jpeg', '.png']:
+            _compress_image(merged_path, final_path)
+        elif ext == '.gif':
+            _compress_gif(merged_path, final_path)
+        elif ext in ['.mp4', '.mov']:
+            _compress_video(merged_path, final_path)
+        else:
+            shutil.move(merged_path, final_path)
+    finally:
+        shutil.rmtree(chunk_dir, ignore_errors=True)
+
+    return final_filename
+
+
+def _extract_tg_file_id(response_json: dict, media_type: str) -> Optional[str]:
+    result = response_json.get('result') or {}
+    if media_type == 'photo':
+        photo_list = result.get('photo') or []
+        if photo_list:
+            return photo_list[-1].get('file_id')
+    if media_type == 'video':
+        video = result.get('video') or {}
+        return video.get('file_id')
+    if media_type == 'gif':
+        animation = result.get('animation') or {}
+        return animation.get('file_id')
+    return result.get('message_id')
+
+
+def _send_telegram_media(chat_id: str, bot_token: str, media_type: str, media_source: str, caption: str = '', reply_markup: Optional[dict] = None) -> dict:
+    telegram_api_base = f"https://api.telegram.org/bot{bot_token}"
+    payload = {"chat_id": chat_id}
+    if media_type == 'photo':
+        endpoint = 'sendPhoto'
+        payload['photo'] = media_source
+        payload['caption'] = caption
+        payload['parse_mode'] = 'HTML'
+    elif media_type == 'video':
+        endpoint = 'sendVideo'
+        payload['video'] = media_source
+        payload['caption'] = caption
+        payload['parse_mode'] = 'HTML'
+    elif media_type == 'gif':
+        endpoint = 'sendAnimation'
+        payload['animation'] = media_source
+        payload['caption'] = caption
+        payload['parse_mode'] = 'HTML'
+    else:
+        endpoint = 'sendMessage'
+        payload['text'] = caption or '发布卡片内容'
+        payload['parse_mode'] = 'HTML'
+
+    if reply_markup is not None:
+        payload['reply_markup'] = json.dumps(reply_markup, ensure_ascii=False)
+
+    response = requests.post(f"{telegram_api_base}/{endpoint}", json=payload, timeout=20)
+    if not response.ok:
+        raise HTTPException(status_code=400, detail=f"Telegram发送失败: {response.text}")
+    return response.json()
+
+
+@app.post("/upload/chunk")
+async def upload_chunk(
+    file_chunk: UploadFile = File(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    upload_id: str = Form(...),
+    filename: str = Form(...),
+):
+    if total_chunks <= 0 or chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(status_code=400, detail="分片索引或总片数无效")
+
+    tmp_folder = os.path.join(UPLOAD_DIR, 'tmp', _sanitize_filename(upload_id))
+    os.makedirs(tmp_folder, exist_ok=True)
+    chunk_path = os.path.join(tmp_folder, f"chunk_{chunk_index}.part")
+
+    try:
+        with open(chunk_path, 'wb') as chunk_file:
+            chunk_file.write(await file_chunk.read())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"分片写入失败: {exc}")
+
+    if chunk_index == total_chunks - 1:
+        try:
+            final_filename = await run_in_threadpool(_merge_and_compress_chunks, upload_id, filename, total_chunks)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"文件合并压缩失败: {str(exc)}")
+        return {"local_media_url": _build_upload_urls(final_filename)}
+
+    return {"detail": "分片接收成功", "chunk_index": chunk_index}
+
 
 @app.post("/upload")
 def upload_file(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="缺少上传文件")
 
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="仅支持图片上传")
+    # 支持图片、视频、gif
+    is_image = file.content_type.startswith("image/")
+    is_video = file.content_type.startswith("video/")
+    is_gif = file.name.lower().endswith('.gif') or file.content_type == 'image/gif'
+    
+    if not (is_image or is_video or is_gif):
+        raise HTTPException(status_code=400, detail="仅支持图片、视频和 GIF 上传")
 
     ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
-        ext = ".jpg"
+    
+    # 扩展扩展名检查，支持视频格式
+    if is_image:
+        if ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
+            ext = ".jpg"
+    elif is_video or is_gif:
+        if ext not in [".mp4", ".webm", ".mov", ".avi", ".gif", ".webp"]:
+            ext = ".mp4"
 
     file_name = f"{int(time.time())}_{random.randint(100000, 999999)}{ext}"
     file_path = os.path.join(UPLOAD_DIR, file_name)
@@ -109,6 +419,7 @@ class CardInput(BaseModel):
     content: str
     img: Optional[str] = None
     image: Optional[str] = None
+    media_type: Optional[str] = 'photo'  # 新增：photo、video、gif
     buttons: Union[List[Any], dict, str] = "[]"
     user_id: Optional[str] = None
 
@@ -130,13 +441,12 @@ class UpdateSettingsInput(BaseModel):
 def get_cards(user_id: Optional[str] = None):
     if not user_id:
         return []
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id FROM cards WHERE user_id = ?"
-    cursor.execute(query, (str(user_id),))
-    rows = cursor.fetchall()
-    conn.close()
-    
+
+    with get_db_connection() as (_, cursor):
+        query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards WHERE user_id = %s"
+        cursor.execute(query, (str(user_id),))
+        rows = cursor.fetchall()
+
     result = []
     for row in rows:
         try:
@@ -153,124 +463,128 @@ def get_cards(user_id: Optional[str] = None):
             "content": row[4],
             "buttons": parsed_buttons,
             "user_id": row[10],
+            "media_type": row[11] or 'photo',  # 返回媒体类型
             "analytics": {
                 "views": row[6],
                 "shares": row[7],
                 "likes": row[8],
-                "clicks": row[9]
-            }
+                "clicks": row[9],
+            },
         })
     return result
 
 # 2. 保存/更新卡片 (完美兼容带有路径 ID 的 POST 请求)
 @app.post("/cards")
 def save_card(data: CardInput):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    
-    # 1. 精确双向提取图片字段（防止为空）
     target_photo = data.img if data.img else (data.image if data.image else "")
     db_img = str(target_photo).strip()
-    
-    # 2. 安全提取并校验 user_id
+
     incoming_user_id = str(data.user_id).strip() if data.user_id is not None else ""
     if not incoming_user_id or incoming_user_id.lower() == "none" or incoming_user_id == "123456789":
-        conn.close()
         raise HTTPException(status_code=400, detail="卡片保存失败：未能提取到有效的 Telegram 用户ID，请确认小程序登录状态。")
-    
-    # 3. 处理按钮数据格式
+
     db_buttons = data.buttons
     if isinstance(db_buttons, (list, dict)):
         db_buttons = json.dumps(db_buttons, ensure_ascii=False)
     else:
         db_buttons = str(db_buttons) if db_buttons is not None else "[]"
-        
+
+    # 获取媒体类型，默认为 photo
+    media_type = str(data.media_type).strip() if data.media_type else 'photo'
+    if media_type not in ['photo', 'video', 'gif']:
+        media_type = 'photo'
+
     card_id = str(data.id).strip() if data.id else ""
-    
+
     try:
-        if card_id:
-            # 修改现有卡片
-            cursor.execute("SELECT id FROM cards WHERE id = ?", (card_id,))
-            if cursor.fetchone():
-                cursor.execute("""
-                    UPDATE cards 
-                    SET title = ?, content = ?, img = ?, buttons = ?, user_id = ? 
-                    WHERE id = ?
-                """, (data.title, data.content, db_img, db_buttons, incoming_user_id, card_id))
+        with get_db_connection() as (_, cursor):
+            if card_id:
+                cursor.execute("SELECT id FROM cards WHERE id = %s", (card_id,))
+                if cursor.fetchone():
+                    cursor.execute(
+                        """
+                        UPDATE cards
+                        SET title = %s, content = %s, img = %s, buttons = %s, media_type = %s, user_id = %s
+                        WHERE id = %s
+                        """,
+                        (data.title, data.content, db_img, db_buttons, media_type, incoming_user_id, card_id),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (card_id, data.title, data.content, db_img, db_buttons, media_type, "草稿", incoming_user_id),
+                    )
             else:
-                cursor.execute("""
-                    INSERT INTO cards (id, title, content, img, buttons, status, user_id) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (card_id, data.title, data.content, db_img, db_buttons, "草稿", incoming_user_id))
-        else:
-            # 创建全新卡片
-            card_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
-            cursor.execute("""
-                INSERT INTO cards (id, title, content, img, buttons, status, user_id) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (card_id, data.title, data.content, db_img, db_buttons, "草稿", incoming_user_id))
-            
-        conn.commit()
-        conn.close()
-        return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
+                card_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+                with get_db_connection() as (_, cursor):
+                    cursor.execute(
+                        """
+                        INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (card_id, data.title, data.content, db_img, db_buttons, media_type, "草稿", incoming_user_id),
+                    )
     except Exception as e:
-        if 'conn' in locals():
-            conn.close()
         raise HTTPException(status_code=500, detail=f"数据库写入异常: {str(e)}")
+
+    return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
 
 # ==========================================
 # ⚡ 黄金修复版：发布卡片接口（支持双向命名对齐）
 # ==========================================
 @app.post("/publish")
-def publish_card(data: dict):
-    # 完美支持驼峰 cardId 或下划线 card_id
+def publish_card_with_tg_cache_and_quota(data: dict):
     card_id = str(data.get("card_id") or data.get("cardId") or "").strip()
     if not card_id:
         raise HTTPException(status_code=400, detail="发布失败：缺少必填卡片ID（card_id）")
 
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
     try:
-        cursor.execute("SELECT title, content, img, buttons, user_id FROM cards WHERE id = ?", (card_id,))
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="卡片未找到")
+        with get_db_connection() as (_, cursor):
+            cursor.execute(
+                "SELECT title, content, img, buttons, user_id, media_type FROM cards WHERE id = %s",
+                (card_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="卡片未找到")
 
-        title, content, img, buttons_raw, card_user_id = row
-        if not card_user_id or str(card_user_id).strip() == "" or str(card_user_id).lower() == "none":
-            raise HTTPException(status_code=400, detail="发布失败：该卡片在数据库中未绑定任何有效用户")
+            title, content, img, buttons_raw, card_user_id, media_type = row
+            if not card_user_id or str(card_user_id).strip() == "" or str(card_user_id).lower() == "none":
+                raise HTTPException(status_code=400, detail="发布失败：该卡片在数据库中未绑定任何有效用户")
 
-        cursor.execute("SELECT telegram_id, bot_token, role, vip_until, monthly_published_count, last_reset_month FROM users WHERE telegram_id = ?", (str(card_user_id),))
-        user_row = cursor.fetchone()
-        if not user_row:
-            raise HTTPException(status_code=404, detail="卡片所属的用户在系统中未找到")
+            cursor.execute(
+                "SELECT telegram_id, bot_token, role, vip_until, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
+                (str(card_user_id),),
+            )
+            user_row = cursor.fetchone()
+            if not user_row:
+                raise HTTPException(status_code=404, detail="卡片所属的用户在系统中未找到")
 
-        chat_id, user_bot_token, role, vip_until, monthly_published_count, last_reset_month = user_row
-        bot_token = user_bot_token if user_bot_token else BOT_TOKEN
-        conn.close()
+            chat_id, user_bot_token, role, vip_until, monthly_published_count, last_reset_month = user_row
+            bot_token = user_bot_token if user_bot_token else BOT_TOKEN
+    except HTTPException:
+        raise
     except Exception as e:
-        if 'conn' in locals():
-            conn.close()
-        if isinstance(e, HTTPException):
-            raise e
         raise HTTPException(status_code=500, detail=f"发布预查询失败: {str(e)}")
 
-    # 月份重置和额度扣除逻辑保持不变...
     now_ts = int(time.time())
     current_month = datetime.utcfromtimestamp(now_ts).strftime('%Y-%m')
+
     if last_reset_month != current_month:
         monthly_published_count = 0
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET monthly_published_count = ?, last_reset_month = ? WHERE telegram_id = ?", (0, current_month, chat_id))
-        conn.commit()
-        conn.close()
+        with get_db_connection() as (_, cursor):
+            cursor.execute(
+                "UPDATE users SET monthly_published_count = %s, last_reset_month = %s WHERE telegram_id = %s",
+                (0, current_month, chat_id),
+            )
 
     if role != 'superuser':
-        if vip_until and int(vip_until) > now_ts:
-            pass
-        elif monthly_published_count >= 5:
-            raise HTTPException(status_code=403, detail='非会员每月仅能发布5张卡片，请前往充值')
+        is_vip = vip_until and int(vip_until) > now_ts
+        if not is_vip and monthly_published_count >= 5:
+            raise HTTPException(status_code=403, detail='非会员每月仅能发布5张卡片，请前往充值开启无限发布')
 
     try:
         buttons_data = json.loads(buttons_raw or "[]")
@@ -294,43 +608,95 @@ def publish_card(data: dict):
     reply_markup = {"inline_keyboard": inline_keyboard} if inline_keyboard else None
     clean_content = re.sub(r'<p\s*>', '', content or '')
     clean_content = re.sub(r'</p\s*>', '\n', clean_content)
-    telegram_api_base = f"https://api.telegram.org/bot{bot_token}"
-    
-    try:
-        if img and str(img).strip() != "":
-            payload = {
-                "chat_id": chat_id,
-                "photo": img,
-                "caption": f"<b>{title}</b>\n\n{clean_content}",
-                "parse_mode": "HTML"
-            }
-            if reply_markup:
-                payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-            response = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
-        else:
-            payload = {
-                "chat_id": chat_id,
-                "text": f"<b>{title}</b>\n\n{clean_content}",
-                "parse_mode": "HTML"
-            }
-            if reply_markup:
-                payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-            response = requests.post(f"{telegram_api_base}/sendMessage", json=payload, timeout=15)
+    caption_text = f"<b>{title}</b>\n\n{clean_content}"
 
-        if not response.ok:
-            raise HTTPException(status_code=400, detail=f"Telegram推送失败。请确认您在TG中开启并/start了机器人。错误原因: {response.text}")
+    with get_db_connection() as (_, cursor):
+        cursor.execute(
+            "SELECT file_id, media_type FROM media_cache WHERE local_url = %s",
+            (img,),
+        )
+        cache_row = cursor.fetchone()
+
+    tg_file_id = cache_row[0] if cache_row else None
+    telegram_api_base = f"https://api.telegram.org/bot{bot_token}"
+    response_data = None
+
+    try:
+        if tg_file_id:
+            if media_type == 'video':
+                payload = {"chat_id": chat_id, "video": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
+                if reply_markup:
+                    payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                res = requests.post(f"{telegram_api_base}/sendVideo", json=payload, timeout=15)
+            elif media_type == 'gif':
+                payload = {"chat_id": chat_id, "animation": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
+                if reply_markup:
+                    payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                res = requests.post(f"{telegram_api_base}/sendAnimation", json=payload, timeout=15)
+            else:
+                payload = {"chat_id": chat_id, "photo": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
+                if reply_markup:
+                    payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                res = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
+            response_data = res
+        else:
+            if img and str(img).strip() != "":
+                if media_type == 'video':
+                    payload = {"chat_id": chat_id, "video": img, "caption": caption_text, "parse_mode": "HTML"}
+                    if reply_markup:
+                        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                    res = requests.post(f"{telegram_api_base}/sendVideo", json=payload, timeout=15)
+                elif media_type == 'gif':
+                    payload = {"chat_id": chat_id, "animation": img, "caption": caption_text, "parse_mode": "HTML"}
+                    if reply_markup:
+                        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                    res = requests.post(f"{telegram_api_base}/sendAnimation", json=payload, timeout=15)
+                else:
+                    payload = {"chat_id": chat_id, "photo": img, "caption": caption_text, "parse_mode": "HTML"}
+                    if reply_markup:
+                        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                    res = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
+            else:
+                payload = {"chat_id": chat_id, "text": caption_text, "parse_mode": "HTML"}
+                if reply_markup:
+                    payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                res = requests.post(f"{telegram_api_base}/sendMessage", json=payload, timeout=15)
+
+            response_data = res
+            if res.ok and img and str(img).strip() != "":
+                try:
+                    res_json = res.json()
+                    new_file_id = _extract_tg_file_id(res_json, media_type)
+                    if new_file_id:
+                        with get_db_connection() as (_, cursor):
+                            cursor.execute(
+                                """
+                                INSERT INTO media_cache (local_url, file_id, media_type, created_at)
+                                VALUES (%s, %s, %s, %s)
+                                ON CONFLICT (local_url) DO UPDATE SET
+                                    file_id = EXCLUDED.file_id,
+                                    media_type = EXCLUDED.media_type,
+                                    created_at = EXCLUDED.created_at
+                                """,
+                                (img, new_file_id, media_type, int(time.time())),
+                            )
+                except Exception as cache_err:
+                    print(f"[警告] 提取或写入 tg_file_id 失败: {str(cache_err)}")
+
+        if not response_data.ok:
+            raise HTTPException(status_code=400, detail=f"Telegram推送失败。请确认您在TG中开启并/start了机器人。错误原因: {response_data.text}")
     except requests.exceptions.RequestException as req_err:
         raise HTTPException(status_code=502, detail=f"连接 Telegram 官方服务超时，请重试: {str(req_err)}")
 
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE cards SET status = ? WHERE id = ?", ("已发布", card_id))
-    if role != 'superuser' and not (vip_until and int(vip_until) > now_ts):
-        cursor.execute("UPDATE users SET monthly_published_count = monthly_published_count + 1 WHERE telegram_id = ?", (chat_id,))
-    conn.commit()
-    conn.close()
+    with get_db_connection() as (_, cursor):
+        cursor.execute("UPDATE cards SET status = %s WHERE id = %s", ("已发布", card_id))
+        if role != 'superuser' and not (vip_until and int(vip_until) > now_ts):
+            cursor.execute(
+                "UPDATE users SET monthly_published_count = monthly_published_count + 1 WHERE telegram_id = %s",
+                (chat_id,),
+            )
 
-    return {"code": 200, "status": "success", "message": "卡片发布成功！"}
+    return {"code": 200, "status": "success", "message": "卡片发布成功！", "is_cached": tg_file_id is not None}
 
 @app.post("/vip/create_invoice")
 def create_invoice(data: dict):
@@ -369,97 +735,94 @@ def crypto_webhook(data: dict):
     metadata = payload.get("metadata") or {}
     telegram_id = str(metadata.get("telegram_id") or payload.get("telegram_id") or data.get("telegram_id") or "").strip()
     if status == 'paid' and telegram_id:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("SELECT vip_until FROM users WHERE telegram_id = ?", (telegram_id,))
-        row = cursor.fetchone()
-        if row:
-            now_ts = int(time.time())
-            current_until = max(now_ts, int(row[0] or 0))
-            new_until = current_until + 7 * 24 * 60 * 60
-            cursor.execute("UPDATE users SET vip_until = ? WHERE telegram_id = ?", (new_until, telegram_id))
-            conn.commit()
-        conn.close()
+        with get_db_connection() as (_, cursor):
+            cursor.execute("SELECT vip_until FROM users WHERE telegram_id = %s", (telegram_id,))
+            row = cursor.fetchone()
+            if row:
+                now_ts = int(time.time())
+                current_until = max(now_ts, int(row[0] or 0))
+                new_until = current_until + 7 * 24 * 60 * 60
+                cursor.execute("UPDATE users SET vip_until = %s WHERE telegram_id = %s", (new_until, telegram_id))
         return {"code": 200, "status": "success", "message": "VIP 有效期已延长 7 天"}
     return {"code": 200, "status": "ignored", "message": "未处理的回调"}
 
 @app.get("/click")
 def click_redirect(card_id: str, button_id: str, redirect: str):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE cards SET clicks = clicks + 1 WHERE id = ?", (card_id,))
-    conn.commit()
-    conn.close()
+    with get_db_connection() as (_, cursor):
+        cursor.execute("UPDATE cards SET clicks = clicks + 1 WHERE id = %s", (card_id,))
     return RedirectResponse(url=redirect)
 
 @app.post("/cards/{card_id}/preview")
 def card_preview(card_id: str):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE cards SET views = views + 1 WHERE id = ?", (card_id,))
-    conn.commit()
-    conn.close()
+    with get_db_connection() as (_, cursor):
+        cursor.execute("UPDATE cards SET views = views + 1 WHERE id = %s", (card_id,))
     return {"code": 200, "status": "success", "message": "预览计数已更新"}
 
 @app.post("/cards/{card_id}/share")
 def card_share(card_id: str):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE cards SET shares = shares + 1 WHERE id = ?", (card_id,))
-    conn.commit()
-    conn.close()
+    with get_db_connection() as (_, cursor):
+        cursor.execute("UPDATE cards SET shares = shares + 1 WHERE id = %s", (card_id,))
     return {"code": 200, "status": "success", "message": "分享计数已更新"}
 
 @app.post("/user/login")
-def user_login(data: UserLoginInput):
+def user_login(data: UserLoginInput):  # 1. 严格保留你原本的输入模型名称
     telegram_id = str(data.id)
     username = str(data.username or "")
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month FROM users WHERE telegram_id = ?", (telegram_id,))
-    row = cursor.fetchone()
 
-    if row:
-        role = row[2]
-        if telegram_id == '8368521045' and role != 'superuser':
-            role = 'superuser'
-            cursor.execute("UPDATE users SET role = ? WHERE telegram_id = ?", (role, telegram_id))
-        if row[1] != username:
-            cursor.execute("UPDATE users SET username = ? WHERE telegram_id = ?", (username, telegram_id))
-        conn.commit()
-        user = {
-            "id": row[0],
-            "telegram_id": row[0],
-            "username": username,
-            "role": role,
-            "vip_until": row[3],
-            "bot_token": row[4],
-            "bot_username": row[5],
-            "language": row[6] or 'zh',
-            "monthly_published_count": row[7],
-            "last_reset_month": row[8]
-        }
-    else:
-        role = 'superuser' if telegram_id == '8368521045' else 'user'
-        cursor.execute('''
-            INSERT INTO users (telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month)
-            VALUES (?, ?, ?, 0, '', '', 'zh', 0, '')
-        ''', (telegram_id, username, role))
-        conn.commit()
-        user = {
-            "id": telegram_id,
-            "telegram_id": telegram_id,
-            "username": username,
-            "role": role,
-            "vip_until": 0,
-            "bot_token": "",
-            "bot_username": "",
-            "language": "zh",
-            "monthly_published_count": 0,
-            "last_reset_month": ""
-        }
+    with get_db_connection() as (_, cursor):
+        cursor.execute(
+            "SELECT telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
+            (telegram_id,),
+        )
+        row = cursor.fetchone()
 
-    conn.close()
+        if row:
+            # ------- 2. 严格保留老用户的超级用户判定和名字更新逻辑 -------
+            role = row[2]
+            if telegram_id == '8368521045' and role != 'superuser':
+                role = 'superuser'
+                cursor.execute("UPDATE users SET role = %s WHERE telegram_id = %s", (role, telegram_id))
+            if row[1] != username:
+                cursor.execute("UPDATE users SET username = %s WHERE telegram_id = %s", (username, telegram_id))
+            
+            user = {
+                "id": row[0],
+                "telegram_id": row[0],
+                "username": username,
+                "role": role,
+                "vip_until": row[3],
+                "bot_token": row[4],
+                "bot_username": row[5],
+                "language": row[6] or 'zh',
+                "monthly_published_count": row[7],
+                "last_reset_month": row[8],
+            }
+        else:
+            # ------- 3. 严格保留新用户的超级用户判定 -------
+            role = 'superuser' if telegram_id == '8368521045' else 'user'
+            
+            # 【核心修复点】：在 INSERT 的字段和 VALUES 里，显式把 id 补进去，彻底干掉 PostgreSQL 的 NotNullViolation 报错
+            cursor.execute(
+                """
+                INSERT INTO users (id, telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month)
+                VALUES (%s, %s, %s, %s, 0, '', '', 'zh', 0, '')
+                """,
+                (telegram_id, telegram_id, username, role), # 让第一个参数 id 和第二个参数 telegram_id 同样绑定 telegram_id
+            )
+            
+            user = {
+                "id": telegram_id,
+                "telegram_id": telegram_id,
+                "username": username,
+                "role": role,
+                "vip_until": 0,
+                "bot_token": "",
+                "bot_username": "",
+                "language": "zh",
+                "monthly_published_count": 0,
+                "last_reset_month": "",
+            }
+
     return user
 
 async def fetch_bot_username(bot_token: str):
@@ -480,56 +843,53 @@ async def update_settings(data: UpdateSettingsInput):
     if not telegram_id:
         raise HTTPException(status_code=400, detail="缺少 user_id")
 
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role, vip_until FROM users WHERE telegram_id = ?", (telegram_id,))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="用户不存在")
+    with get_db_connection() as (_, cursor):
+        cursor.execute("SELECT role, vip_until FROM users WHERE telegram_id = %s", (telegram_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
 
-    role, vip_until = row
-    now_ts = int(time.time())
-    is_member = role == 'superuser' or (vip_until and int(vip_until) > now_ts)
+        role, vip_until = row
+        now_ts = int(time.time())
+        is_member = role == 'superuser' or (vip_until and int(vip_until) > now_ts)
 
-    updates = []
-    params = []
+        updates = []
+        params = []
 
-    if data.bot_token is not None:
-        if not is_member:
-            conn.close()
-            raise HTTPException(status_code=403, detail="仅会员或超级账号可绑定专属Bot")
-        bot_token = str(data.bot_token).strip()
-        if bot_token:
-            bot_username = await fetch_bot_username(bot_token)
-            updates.append("bot_token = ?")
-            params.append(bot_token)
-            updates.append("bot_username = ?")
-            params.append(bot_username)
-        else:
-            updates.append("bot_token = ?")
-            params.append("")
-            updates.append("bot_username = ?")
-            params.append("")
+        if data.bot_token is not None:
+            if not is_member:
+                raise HTTPException(status_code=403, detail="仅会员或超级账号可绑定专属Bot")
+            bot_token = str(data.bot_token).strip()
+            if bot_token:
+                bot_username = await fetch_bot_username(bot_token)
+                updates.append("bot_token = %s")
+                params.append(bot_token)
+                updates.append("bot_username = %s")
+                params.append(bot_username)
+            else:
+                updates.append("bot_token = %s")
+                params.append("")
+                updates.append("bot_username = %s")
+                params.append("")
 
-    if data.language is not None:
-        language = str(data.language).strip().lower()
-        if language not in ['zh', 'en']:
-            language = 'zh'
-        updates.append("language = ?")
-        params.append(language)
+        if data.language is not None:
+            language = str(data.language).strip().lower()
+            if language not in ['zh', 'en']:
+                language = 'zh'
+            updates.append("language = %s")
+            params.append(language)
 
-    if updates:
-        params.append(telegram_id)
-        cursor.execute(f"UPDATE users SET {', '.join(updates)} WHERE telegram_id = ?", params)
-        conn.commit()
+        if updates:
+            params.append(telegram_id)
+            cursor.execute(f"UPDATE users SET {', '.join(updates)} WHERE telegram_id = %s", params)
 
-    cursor.execute("SELECT telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month FROM users WHERE telegram_id = ?", (telegram_id,))
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        raise HTTPException(status_code=404, detail="用户不存在")
+        cursor.execute(
+            "SELECT telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
+            (telegram_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
 
     return {
         "id": row[0],
@@ -541,18 +901,19 @@ async def update_settings(data: UpdateSettingsInput):
         "bot_username": row[5],
         "language": row[6] or 'zh',
         "monthly_published_count": row[7],
-        "last_reset_month": row[8]
+        "last_reset_month": row[8],
     }
 
 # 3. 获取单张卡片详情
 @app.get("/cards/{card_id}")
 def get_card(card_id: str):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, title, status, img, content, buttons, views, shares, likes, clicks FROM cards WHERE id = ?", (card_id,))
-    row = cursor.fetchone()
-    conn.close()
-    
+    with get_db_connection() as (_, cursor):
+        cursor.execute(
+            "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, media_type FROM cards WHERE id = %s",
+            (card_id,),
+        )
+        row = cursor.fetchone()
+
     if not row:
         raise HTTPException(status_code=404, detail="卡片未找到")
 
@@ -569,20 +930,18 @@ def get_card(card_id: str):
         "image": row[3],
         "content": row[4],
         "buttons": parsed_buttons,
+        "media_type": row[10] or 'photo',  # 返回媒体类型
         "analytics": {
             "views": row[6],
             "shares": row[7],
             "likes": row[8],
-            "clicks": row[9]
-        }
+            "clicks": row[9],
+        },
     }
 
 # 4. 删除卡片
 @app.delete("/cards/{card_id}")
 def delete_card(card_id: str):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM cards WHERE id = ?", (card_id,))
-    conn.commit()
-    conn.close()
+    with get_db_connection() as (_, cursor):
+        cursor.execute("DELETE FROM cards WHERE id = %s", (card_id,))
     return {"code": 200, "status": "success", "msg": "删除成功", "message": "删除成功"}

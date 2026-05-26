@@ -184,6 +184,7 @@ export default function App() {
         title: cardData.title ?? '',
         content: cardData.content ?? '',
         img: cardData.img ?? '',
+        media_type: cardData.media_type ?? 'photo',  // 新增：保存媒体类型
         buttons: typeof cardData.buttons === 'string' ? cardData.buttons : JSON.stringify(cardData.buttons || []),
         user_id: currentUser?.id?.toString()
       };
@@ -445,7 +446,12 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
               return (
                 <div key={card.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
                   <div className="flex gap-4 p-3 cursor-pointer active:bg-gray-50/80 transition-colors" onClick={() => toggleCardActions(card.id)}>
-                    <img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                    {card.media_type === 'video' ? 
+                      <video src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" />
+                      : card.media_type === 'gif' ?
+                      <img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                      : <img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                    }
                     <div className="flex-1 flex flex-col justify-between py-1">
                       <p className="font-bold text-sm text-gray-800 line-clamp-2">{card.title || "未命名卡片"}</p >
                       <div className="flex items-center justify-between">
@@ -681,10 +687,22 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
 function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [showMenu, setShowMenu] = useState(false);
   const [menuView, setMenuView] = useState('main'); 
-  const [buttons, setButtons] = useState(cardToEdit ? cardToEdit.buttons : []); 
+  
+  // 修复：buttons 可能是字符串，需要 JSON.parse
+  const [buttons, setButtons] = useState(() => {
+    if (!cardToEdit) return [];
+    if (typeof cardToEdit.buttons === 'string') {
+      try {
+        return JSON.parse(cardToEdit.buttons);
+      } catch {
+        return [];
+      }
+    }
+    return Array.isArray(cardToEdit.buttons) ? cardToEdit.buttons : [];
+  }); 
   const [activeBtnId, setActiveBtnId] = useState(null);
   const [gridConfig, setGridConfig] = useState({ rows: 1, cols: 2 });
-  const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { url: cardToEdit.img, remoteUrl: cardToEdit.img, type: 'image' } : null); 
+  const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { remoteUrl: cardToEdit.img, type: cardToEdit.media_type || 'photo', uploading: false } : null); 
   
   const fileInputRef = useRef(null);
   const emojiList = [
@@ -709,7 +727,17 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     if (!file) return;
 
     const previewUrl = URL.createObjectURL(file);
-    setMediaFile({ url: previewUrl, previewUrl, remoteUrl: null, type: file.type.startsWith('video') ? 'video' : 'image', uploading: true });
+    
+    // 判断媒体类型：photo、video、gif
+    let mediaType = 'photo';
+    if (file.type.startsWith('video/')) {
+      mediaType = 'video';
+    } else if (file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif') {
+      mediaType = 'gif';
+    }
+
+    // 设置本地预览状态，previewUrl 只用于前端预览，不保存到数据库
+    setMediaFile({ previewUrl, type: mediaType, uploading: true, remoteUrl: null });
 
     const formData = new FormData();
     formData.append('file', file);
@@ -729,24 +757,27 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
         throw new Error('后端返回无效上传地址');
       }
 
+      // 上传完成后，将公网 URL 保存到 remoteUrl，不再需要 previewUrl
       setMediaFile((prev) => ({
         ...prev,
-        url: data.url,
-        remoteUrl: data.url,
+        remoteUrl: data.url,  // 公网地址，用于数据库和发送到 Telegram
+        previewUrl: prev.previewUrl,  // 保留 previewUrl 用于显示
         uploading: false,
       }));
     } catch (uploadError) {
       console.error('图片上传失败:', uploadError);
       alert('图片上传失败，请重试。');
-      setMediaFile((prev) => ({ ...prev, uploading: false }));
+      // 上传失败时，清除 mediaFile 防止误保存
+      setMediaFile(null);
     }
   };
 
   const triggerPublish = () => {
     if (!editor) return;
 
-    if (mediaFile?.type === 'image' && !mediaFile?.remoteUrl) {
-      alert('图片正在上传，请稍后再保存');
+    // 改为判断 uploading 状态，而不是只针对图片
+    if (mediaFile?.uploading) {
+      alert('媒体文件正在上传，请稍后再保存');
       return;
     }
 
@@ -757,7 +788,8 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       status: cardToEdit ? cardToEdit.status : "草稿",
       content: editor.getHTML(),
       buttons: buttons,
-      img: mediaFile?.remoteUrl || mediaFile?.url || "https://picsum.photos/200/120?random=" + Math.floor(Math.random() * 100),
+      img: mediaFile?.remoteUrl || "",  // 禁止保存 blob URL，只保存公网地址或空字符串
+      media_type: mediaFile?.type || 'photo',  // 同时保存媒体类型
       analytics: cardToEdit ? cardToEdit.analytics : { views: 0, shares: 0, likes: 0, clicks: 0 }
     });
   };
@@ -829,8 +861,9 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
 
           {mediaFile && (
             <div className="w-full bg-black relative flex items-center justify-center max-h-[220px] overflow-hidden">
-              {mediaFile.type === 'video' ? <video src={mediaFile.url} controls className="w-full max-h-[220px] object-contain" /> 
-              : <img src={mediaFile.url} className="w-full max-h-[220px] object-contain" alt="" />}
+              {mediaFile.type === 'video' ? <video src={mediaFile.previewUrl || mediaFile.remoteUrl} controls className="w-full max-h-[220px] object-contain" /> 
+              : mediaFile.type === 'gif' ? <img src={mediaFile.previewUrl || mediaFile.remoteUrl} className="w-full max-h-[220px] object-contain" alt="" />
+              : <img src={mediaFile.previewUrl || mediaFile.remoteUrl} className="w-full max-h-[220px] object-contain" alt="" />}
               <button onClick={() => setMediaFile(null)} className="absolute top-2 right-2 bg-black/60 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">✕</button>
             </div>
           )}
