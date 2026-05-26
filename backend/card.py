@@ -10,12 +10,12 @@ from functools import partial
 from urllib.parse import quote_plus
 from datetime import datetime
 from pydantic import BaseModel
-from typing import List, Optional, Union
-from fastapi import FastAPI, HTTPException, Request
+from typing import List, Optional, Union, Any
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
-from typing import Any
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心")
 
 # 允许跨域请求
@@ -31,6 +31,9 @@ BOT_TOKEN = "8732461104:AAHiXL_2QzqHFRg2zfdvews2J5RDW2KWieA"
 CRYPTOBOT_TOKEN = "586003:AA8fUwUV0Y6cC0GBRUWtiJO9todPsTaKKKs"
 DB_FILE = "kongjing.db"
 API_BASE_URL = "https://www.kongjing.online/api"
+UPLOAD_DIR = "/root/card_system/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -76,15 +79,38 @@ def init_db():
 
 init_db()
 
+@app.post("/upload")
+def upload_file(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少上传文件")
+
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="仅支持图片上传")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
+        ext = ".jpg"
+
+    file_name = f"{int(time.time())}_{random.randint(100000, 999999)}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, file_name)
+
+    try:
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"文件保存失败: {exc}")
+
+    return {"url": f"https://www.kongjing.online/uploads/{file_name}"}
+
 # ---- 兼容前端的严谨数据模型 ----
 class CardInput(BaseModel):
-    id: Optional[Any] = None       
-    title: Optional[Any] = ""      
-    status: Optional[Any] = "草稿"
-    img: Optional[Any] = ""
-    content: Optional[Any] = ""
-    buttons: Optional[Any] = "[]"
-    user_id: Optional[Any] = None
+    id: Optional[str] = None
+    title: str
+    content: str
+    img: Optional[str] = None
+    image: Optional[str] = None
+    buttons: Union[List[Any], dict, str] = "[]"
+    user_id: Optional[str] = None
 
 class UserLoginInput(BaseModel):
     id: Any
@@ -138,63 +164,69 @@ def get_cards(user_id: Optional[str] = None):
 
 # 2. 保存/更新卡片 (完美兼容带有路径 ID 的 POST 请求)
 @app.post("/cards")
-@app.post("/cards/{path_card_id}")
-def save_card(data: CardInput, path_card_id: Optional[Any] = None):
+def save_card(data: CardInput):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
-    # 1. 稳妥提取 ID 并强制转为字符串
-    raw_id = path_card_id or data.id
-    card_id = str(raw_id) if raw_id is not None else None
+    # 1. 精确双向提取图片字段（防止为空）
+    target_photo = data.img if data.img else (data.image if data.image else "")
+    db_img = str(target_photo).strip()
     
-    if not card_id:
-        while True:
-            card_id = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-            cursor.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,))
-            if not cursor.fetchone():
-                break
-
-    # 2. 稳妥处理 buttons 字段：如果前端传来的是列表/字典对象，强转成字符串存入数据库
-    # 如果传来的是本就是字符串，就原样不动，防止存入数据库时格式错乱
+    # 2. 安全提取并校验 user_id
+    incoming_user_id = str(data.user_id).strip() if data.user_id is not None else ""
+    if not incoming_user_id or incoming_user_id.lower() == "none" or incoming_user_id == "123456789":
+        conn.close()
+        raise HTTPException(status_code=400, detail="卡片保存失败：未能提取到有效的 Telegram 用户ID，请确认小程序登录状态。")
+    
+    # 3. 处理按钮数据格式
     db_buttons = data.buttons
     if isinstance(db_buttons, (list, dict)):
         db_buttons = json.dumps(db_buttons, ensure_ascii=False)
     else:
         db_buttons = str(db_buttons) if db_buttons is not None else "[]"
-
-    # 3. 其他字段同样做一层安全的字符串强转防御
-    db_title = str(data.title) if data.title is not None else ""
-    db_status = str(data.status) if data.status is not None else "草稿"
-    db_img = str(data.img) if data.img is not None else ""
-    db_content = str(data.content) if data.content is not None else ""
-
-    # 4. 执行数据库操作
-    cursor.execute("SELECT user_id FROM cards WHERE id = ?", (card_id,))
-    existing = cursor.fetchone()
-    db_user_id = str(data.user_id) if data.user_id is not None else None
-    if existing:
-        if db_user_id is None:
-            db_user_id = existing[0]
-        cursor.execute('''
-            UPDATE cards SET title=?, status=?, img=?, content=?, buttons=?, user_id=? WHERE id=?
-        ''', (db_title, db_status, db_img, db_content, db_buttons, db_user_id, card_id))
-    else:
-        cursor.execute('''
-            INSERT INTO cards (id, title, status, img, content, buttons, views, shares, likes, clicks, user_id)
-            VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?)
-        ''', (card_id, db_title, db_status, db_img, db_content, db_buttons, db_user_id))
         
-    conn.commit()
-    conn.close()
+    card_id = str(data.id).strip() if data.id else ""
+    
+    try:
+        if card_id:
+            # 修改现有卡片
+            cursor.execute("SELECT id FROM cards WHERE id = ?", (card_id,))
+            if cursor.fetchone():
+                cursor.execute("""
+                    UPDATE cards 
+                    SET title = ?, content = ?, img = ?, buttons = ?, user_id = ? 
+                    WHERE id = ?
+                """, (data.title, data.content, db_img, db_buttons, incoming_user_id, card_id))
+            else:
+                cursor.execute("""
+                    INSERT INTO cards (id, title, content, img, buttons, status, user_id) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (card_id, data.title, data.content, db_img, db_buttons, "草稿", incoming_user_id))
+        else:
+            # 创建全新卡片
+            card_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+            cursor.execute("""
+                INSERT INTO cards (id, title, content, img, buttons, status, user_id) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (card_id, data.title, data.content, db_img, db_buttons, "草稿", incoming_user_id))
+            
+        conn.commit()
+        conn.close()
+        return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
+    except Exception as e:
+        if 'conn' in locals():
+            conn.close()
+        raise HTTPException(status_code=500, detail=f"数据库写入异常: {str(e)}")
 
-    # 💥 同时返回 msg 和 message，彻底满足前端的强迫症
-    return {"code": 200, "status": "success", "id": card_id, "msg": "保存成功", "message": "保存成功"}
-
+# ==========================================
+# ⚡ 黄金修复版：发布卡片接口（支持双向命名对齐）
+# ==========================================
 @app.post("/publish")
 def publish_card(data: dict):
-    card_id = str(data.get("cardId") or data.get("card_id") or "").strip()
+    # 完美支持驼峰 cardId 或下划线 card_id
+    card_id = str(data.get("card_id") or data.get("cardId") or "").strip()
     if not card_id:
-        raise HTTPException(status_code=400, detail="缺少 cardId")
+        raise HTTPException(status_code=400, detail="发布失败：缺少必填卡片ID（card_id）")
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -204,20 +236,26 @@ def publish_card(data: dict):
         if not row:
             raise HTTPException(status_code=404, detail="卡片未找到")
 
-        title, content, img, buttons_raw, user_id = row
-        if not user_id:
-            raise HTTPException(status_code=400, detail="卡片未绑定用户")
+        title, content, img, buttons_raw, card_user_id = row
+        if not card_user_id or str(card_user_id).strip() == "" or str(card_user_id).lower() == "none":
+            raise HTTPException(status_code=400, detail="发布失败：该卡片在数据库中未绑定任何有效用户")
 
-        cursor.execute("SELECT telegram_id, bot_token, role, vip_until, monthly_published_count, last_reset_month FROM users WHERE telegram_id = ?", (user_id,))
+        cursor.execute("SELECT telegram_id, bot_token, role, vip_until, monthly_published_count, last_reset_month FROM users WHERE telegram_id = ?", (str(card_user_id),))
         user_row = cursor.fetchone()
         if not user_row:
-            raise HTTPException(status_code=404, detail="未找到卡片所属用户")
+            raise HTTPException(status_code=404, detail="卡片所属的用户在系统中未找到")
 
         chat_id, user_bot_token, role, vip_until, monthly_published_count, last_reset_month = user_row
         bot_token = user_bot_token if user_bot_token else BOT_TOKEN
-    finally:
         conn.close()
+    except Exception as e:
+        if 'conn' in locals():
+            conn.close()
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"发布预查询失败: {str(e)}")
 
+    # 月份重置和额度扣除逻辑保持不变...
     now_ts = int(time.time())
     current_month = datetime.utcfromtimestamp(now_ts).strftime('%Y-%m')
     if last_reset_month != current_month:
@@ -238,7 +276,6 @@ def publish_card(data: dict):
         buttons_data = json.loads(buttons_raw or "[]")
     except Exception:
         buttons_data = []
-
     if isinstance(buttons_data, dict):
         buttons_data = [buttons_data]
 
@@ -246,28 +283,25 @@ def publish_card(data: dict):
     for btn in buttons_data:
         if not isinstance(btn, dict):
             continue
-        btn_id = str(btn.get("id") or btn.get("button_id") or btn.get("text") or "button")
+        btn_id = str(btn.get("id") or btn.get("button_id") or btn.get("text") or "btn")
         btn_text = str(btn.get("text") or btn.get("label") or "点击")
         original_url = str(btn.get("url") or btn.get("link") or "")
         if not original_url:
             continue
         redirect_url = f"https://www.kongjing.online/api/click?card_id={quote_plus(card_id)}&button_id={quote_plus(btn_id)}&redirect={quote_plus(original_url)}"
-        inline_keyboard.append([
-            {"text": btn_text, "url": redirect_url}
-        ])
+        inline_keyboard.append([{"text": btn_text, "url": redirect_url}])
 
     reply_markup = {"inline_keyboard": inline_keyboard} if inline_keyboard else None
-
     clean_content = re.sub(r'<p\s*>', '', content or '')
     clean_content = re.sub(r'</p\s*>', '\n', clean_content)
     telegram_api_base = f"https://api.telegram.org/bot{bot_token}"
-
+    
     try:
-        if img:
+        if img and str(img).strip() != "":
             payload = {
                 "chat_id": chat_id,
                 "photo": img,
-                "caption": f"{title}\n\n{clean_content}",
+                "caption": f"<b>{title}</b>\n\n{clean_content}",
                 "parse_mode": "HTML"
             }
             if reply_markup:
@@ -276,18 +310,17 @@ def publish_card(data: dict):
         else:
             payload = {
                 "chat_id": chat_id,
-                "text": f"{title}\n\n{clean_content}",
+                "text": f"<b>{title}</b>\n\n{clean_content}",
                 "parse_mode": "HTML"
             }
             if reply_markup:
                 payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
             response = requests.post(f"{telegram_api_base}/sendMessage", json=payload, timeout=15)
-    except requests.RequestException as err:
-        raise HTTPException(status_code=502, detail=f"Telegram 推送失败，网络异常: {err}")
 
-    if not response.ok:
-        error_text = response.text or 'unknown error'
-        raise HTTPException(status_code=502, detail=f"Telegram 推送失败，请确保您已在TG中对该Bot点击过‘启动(Start)’。错误信息: {error_text}")
+        if not response.ok:
+            raise HTTPException(status_code=400, detail=f"Telegram推送失败。请确认您在TG中开启并/start了机器人。错误原因: {response.text}")
+    except requests.exceptions.RequestException as req_err:
+        raise HTTPException(status_code=502, detail=f"连接 Telegram 官方服务超时，请重试: {str(req_err)}")
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -296,6 +329,8 @@ def publish_card(data: dict):
         cursor.execute("UPDATE users SET monthly_published_count = monthly_published_count + 1 WHERE telegram_id = ?", (chat_id,))
     conn.commit()
     conn.close()
+
+    return {"code": 200, "status": "success", "message": "卡片发布成功！"}
 
 @app.post("/vip/create_invoice")
 def create_invoice(data: dict):

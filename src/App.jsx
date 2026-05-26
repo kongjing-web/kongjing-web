@@ -684,7 +684,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [buttons, setButtons] = useState(cardToEdit ? cardToEdit.buttons : []); 
   const [activeBtnId, setActiveBtnId] = useState(null);
   const [gridConfig, setGridConfig] = useState({ rows: 1, cols: 2 });
-  const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { url: cardToEdit.img, type: 'image' } : null); 
+  const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { url: cardToEdit.img, remoteUrl: cardToEdit.img, type: 'image' } : null); 
   
   const fileInputRef = useRef(null);
   const emojiList = [
@@ -703,16 +703,53 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     },
   });
 
-  // 处理图片或者视频文件（在生产环境下，此处可以改为直接把 File 上传至 Python 后端生成真实 URL）
-  const handleMediaChange = (e) => {
+  // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
+  const handleMediaChange = async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setMediaFile({ url: URL.createObjectURL(file), type: file.type.startsWith('video') ? 'video' : 'image' });
+    if (!file) return;
+
+    const previewUrl = URL.createObjectURL(file);
+    setMediaFile({ url: previewUrl, previewUrl, remoteUrl: null, type: file.type.startsWith('video') ? 'video' : 'image', uploading: true });
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch(`${BASE_URL}/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`上传失败：${response.status}`);
+      }
+
+      const data = await response.json();
+      if (!data?.url) {
+        throw new Error('后端返回无效上传地址');
+      }
+
+      setMediaFile((prev) => ({
+        ...prev,
+        url: data.url,
+        remoteUrl: data.url,
+        uploading: false,
+      }));
+    } catch (uploadError) {
+      console.error('图片上传失败:', uploadError);
+      alert('图片上传失败，请重试。');
+      setMediaFile((prev) => ({ ...prev, uploading: false }));
     }
   };
 
   const triggerPublish = () => {
     if (!editor) return;
+
+    if (mediaFile?.type === 'image' && !mediaFile?.remoteUrl) {
+      alert('图片正在上传，请稍后再保存');
+      return;
+    }
+
     const pureText = editor.getText().trim();
     onPublish({
       id: cardToEdit ? cardToEdit.id : null,
@@ -720,7 +757,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       status: cardToEdit ? cardToEdit.status : "草稿",
       content: editor.getHTML(),
       buttons: buttons,
-      img: mediaFile?.url || "https://picsum.photos/200/120?random=" + Math.floor(Math.random() * 100),
+      img: mediaFile?.remoteUrl || mediaFile?.url || "https://picsum.photos/200/120?random=" + Math.floor(Math.random() * 100),
       analytics: cardToEdit ? cardToEdit.analytics : { views: 0, shares: 0, likes: 0, clicks: 0 }
     });
   };
