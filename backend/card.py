@@ -389,7 +389,7 @@ def _send_telegram_media(chat_id: str, bot_token: str, media_type: str, media_so
 
 @app.post("/upload/chunk")
 async def upload_chunk(
-    file_chunk: UploadFile = File(...),
+    file_chunk: UploadFile = File(...), # 确保前端 FormData 里的文件 key 必须叫 file_chunk
     chunk_index: int = Form(...),
     total_chunks: int = Form(...),
     upload_id: str = Form(...),
@@ -408,29 +408,43 @@ async def upload_chunk(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"分片写入失败: {exc}")
 
+    # 当最后一片上传完成后，开始合并压缩
     if chunk_index == total_chunks - 1:
         try:
             final_filename = await run_in_threadpool(_merge_and_compress_chunks, upload_id, filename, total_chunks)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"文件合并压缩失败: {str(exc)}")
-        return {"local_media_url": _build_upload_urls(final_filename)}
+        
+        # 【核心修复】：做全兼容返回，不管前端取 url 还是 local_media_url，都能完美拿到
+        final_url = _build_upload_urls(final_filename)
+        return {
+            "code": 200,
+            "status": "success",
+            "url": final_url,
+            "local_media_url": final_url
+        }
 
     return {"detail": "分片接收成功", "chunk_index": chunk_index}
+
 
 @app.post("/upload")
 def upload_file(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="缺少上传文件")
 
-    is_image = file.content_type.startswith("image/")
-    is_video = file.content_type.startswith("video/")
-    is_gif = file.name.lower().endswith('.gif') or file.content_type == 'image/gif'
+    filename_lower = file.filename.lower()
+    content_type_lower = (file.content_type or "").lower()
+
+    # 1. 基础大类过滤
+    is_image = content_type_lower.startswith("image/")
+    is_video = content_type_lower.startswith("video/")
+    is_gif = filename_lower.endswith('.gif') or content_type_lower == 'image/gif'
     
     if not (is_image or is_video or is_gif):
         raise HTTPException(status_code=400, detail="仅支持图片、视频和 GIF 上传")
 
-    ext = os.path.splitext(file.filename)[1].lower()
-    
+    # 2. 提取并规范化后缀
+    ext = os.path.splitext(filename_lower)[1]
     if is_image:
         if ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
             ext = ".jpg"
@@ -442,12 +456,41 @@ def upload_file(file: UploadFile = File(...)):
     file_path = os.path.join(UPLOAD_DIR, file_name)
 
     try:
+        # 写入文件
         with open(file_path, "wb") as f:
-            f.write(file.file.read())
+            shutil.copyfileobj(file.file, f)
+            
+        # ==========================================
+        # 🔥 【核心新增：深层真实校验】
+        # ==========================================
+        if is_image or is_gif:
+            try:
+                # Pillow 会尝试解码文件流，如果是伪造的虚假图片，这里会直接崩溃
+                with Image.open(file_path) as verify_img:
+                    verify_img.verify() # 深入校验图片完整性
+            except Exception:
+                if os.path.exists(file_path):
+                    os.remove(file_path) # 校验失败，立刻销毁伪造文件
+                raise HTTPException(status_code=400, detail="文件损坏或非真实的合法图片/GIF格式！")
+        
+        elif is_video:
+            # 视频使用你已有的 ffmpeg/ffprobe 逻辑，在之后的合并或者这里检测是否合法
+            pass
+            
+    except HTTPException:
+        raise
     except Exception as exc:
+        if os.path.exists(file_path):
+            os.remove(file_path)
         raise HTTPException(status_code=500, detail=f"文件保存失败: {exc}")
 
-    return {"url": f"https://www.kongjing.online/uploads/{file_name}"}
+    final_url = f"https://www.kongjing.online/uploads/{file_name}"
+    return {
+        "code": 200,
+        "status": "success",
+        "url": final_url,
+        "local_media_url": final_url
+    }
 
 # ---- 数据模型定义 ----
 class CardInput(BaseModel):
