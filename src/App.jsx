@@ -710,18 +710,6 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [activeBtnId, setActiveBtnId] = useState(null);
   const [gridConfig, setGridConfig] = useState({ rows: 1, cols: 2 });
   const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { remoteUrl: cardToEdit.img, type: cardToEdit.media_type || 'photo', uploading: false } : null); 
-  // ---- 新增：用于完美复刻 Telegram 气泡宽度对齐的逻辑 ----
-  const [tgRenderedWidth, setTgRenderedWidth] = useState(330);
-  const tgImgRef = useRef(null);
-  const image = mediaFile?.previewUrl || mediaFile?.remoteUrl || '';
-
-  const handleTgImageLoad = () => {
-    if (tgImgRef.current) {
-      const currentWidth = tgImgRef.current.clientWidth;
-      setTgRenderedWidth(Math.min(Math.max(currentWidth, 150), 330));
-    }
-  };
-  // ----------------------------------------------------
   
   const fileInputRef = useRef(null);
   const emojiList = [
@@ -739,12 +727,6 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       attributes: { class: 'focus:outline-none min-h-[140px] text-[15px] leading-[1.4] text-[#000000] max-w-none break-words whitespace-pre-wrap font-sans' },
     },
   });
-
-  useEffect(() => {
-    if (!image) {
-      setTgRenderedWidth(330);
-    }
-  }, [image]);
 
   // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
   const handleMediaChange = async (e) => {
@@ -876,7 +858,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-80">
-        <div className="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 relative">
+        <div className="w-full max-w-[330px] mx-auto bg-white rounded-[15px] overflow-hidden shadow-sm border border-gray-100 flex flex-col">
           <div className="p-3 border-b border-gray-50 bg-slate-50/50 flex justify-between items-center">
             <span className="text-[11px] text-gray-400 font-bold">TELEGRAM MEDIA FILE</span>
             <button onClick={() => fileInputRef.current.click()} className="text-xs text-blue-500 font-bold hover:underline">
@@ -885,64 +867,32 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
             <input type="file" ref={fileInputRef} onChange={handleMediaChange} accept="image/*,video/*" className="hidden" />
           </div>
 
-          <div className="p-4 bg-white">
-            <div className="w-full max-w-[330px] bg-white rounded-[15px] shadow-sm overflow-hidden flex flex-col mx-auto border border-gray-100">
-              <div className="w-full max-h-[380px] min-h-[160px] bg-[#f4f4f7] flex items-center justify-center overflow-hidden relative">
-                {mediaFile ? (
-                  mediaFile.type === 'video' ? (
-                    <video
-                      ref={tgImgRef}
-                      src={mediaFile.previewUrl || mediaFile.remoteUrl}
-                      controls
-                      onLoadedData={handleTgImageLoad}
-                      className="w-auto h-auto max-w-full max-h-[380px] object-contain"
-                    />
-                  ) : (
-                    <img
-                      ref={tgImgRef}
-                      src={mediaFile.previewUrl || mediaFile.remoteUrl}
-                      onLoad={handleTgImageLoad}
-                      alt="Telegram Card Media"
-                      className="w-auto h-auto max-w-full max-h-[380px] object-contain"
-                    />
-                  )
-                ) : (
-                  <div className="flex flex-col items-center justify-center text-gray-400 text-xs gap-1 py-10">
-                    <span>暂无图片/视频</span>
-                    <span className="text-[10px] text-gray-300">模拟最大显示宽: 330px</span>
-                  </div>
-                )}
-                {mediaFile && (
-                  <button onClick={() => setMediaFile(null)} className="absolute top-2 right-2 bg-black/60 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">✕</button>
-                )}
-              </div>
-
-              <div style={{ width: `${tgRenderedWidth}px` }} className="mx-auto flex flex-col transition-all duration-200">
-                <div className="px-3 py-2 text-[15px] text-[#1f1f1f] leading-[1.35] break-words text-left w-full">
-                  <div
-                    dangerouslySetInnerHTML={{ __html: editor?.getHTML() || '<p class="text-gray-400">输入说明文字...</p>' }}
-                    className="prose prose-sm max-w-none tg-caption-style"
-                  />
-                </div>
-
-                {buttons.length > 0 && (
-                  <div className="p-1.5 pt-0 space-y-1.5 bg-white w-full">
-                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${gridConfig.cols}, 1fr)` }}>
-                      {buttons.map(btn => (
-                        <div
-                          key={btn.id}
-                          onClick={() => { setActiveBtnId(btn.id); setMenuView('editBtn'); setShowMenu(true); }}
-                          className={`py-2 px-1 rounded-[7px] text-center text-[14px] font-medium border transition-all cursor-pointer ${activeBtnId === btn.id ? 'border-blue-500 bg-blue-50 text-blue-600' : 'bg-[#f1f5f9] border-transparent text-[#2481cc]'}`}
-                        >
-                          {btn.text || '未命名'}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+          {mediaFile && (
+            <div className="w-full max-h-[380px] min-h-[160px] min-w-[150px] bg-[#f4f4f7] relative flex items-center justify-center overflow-hidden">
+              {mediaFile.type === 'video' ? <video src={mediaFile.previewUrl || mediaFile.remoteUrl} controls className="w-full h-full object-contain object-center" /> 
+              : mediaFile.type === 'gif' ? <img src={mediaFile.previewUrl || mediaFile.remoteUrl} className="w-full h-full object-contain object-center" alt="" />
+              : <img src={mediaFile.previewUrl || mediaFile.remoteUrl} className="w-full h-full object-contain object-center" alt="" />}
+              <button onClick={() => setMediaFile(null)} className="absolute top-2 right-2 bg-black/60 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">✕</button>
             </div>
+          )}
+
+          <div className="p-3 bg-white min-h-[140px]">
+            <EditorContent editor={editor} onFocus={() => setShowMenu(false)} />
           </div>
+
+          {buttons.length > 0 && (
+            <div className="p-2 border-t border-gray-100 bg-white grid gap-[1.5px]" style={{ gridTemplateColumns: `repeat(${gridConfig.cols}, 1fr)` }}>
+              {buttons.map(btn => (
+                <div 
+                  key={btn.id} 
+                  onClick={() => { setActiveBtnId(btn.id); setMenuView('editBtn'); setShowMenu(true); }}
+                  className={`py-1.5 px-1 rounded-md text-center text-xs font-bold border transition-all cursor-pointer ${activeBtnId === btn.id ? 'border-blue-500 bg-blue-50 text-blue-600' : 'bg-white border-gray-200 text-gray-500'}`}
+                >
+                  {btn.text || "未命名"}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
