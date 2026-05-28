@@ -8,13 +8,15 @@ import subprocess
 import time
 import traceback
 import uuid
+import hmac
+import hashlib
 import requests
 from contextlib import contextmanager
 from functools import partial
 from typing import List, Optional, Union, Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, parse_qsl
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header, Depends
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -46,7 +48,6 @@ API_BASE_URL = "https://www.kongjing.online/api"
 UPLOAD_DIR = "/var/www/kongjing/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-
 @contextmanager
 def get_db_connection():
     conn = psycopg2.connect(**DB_CONFIG)
@@ -61,7 +62,6 @@ def get_db_connection():
         cursor.close()
         conn.close()
 
-
 def _get_existing_columns(cursor, table_name: str):
     cursor.execute(
         """
@@ -71,7 +71,6 @@ def _get_existing_columns(cursor, table_name: str):
         (table_name,),
     )
     return {row[0] for row in cursor.fetchall()}
-
 
 def init_db():
     with get_db_connection() as (_, cursor):
@@ -180,14 +179,63 @@ def init_db():
                 """
             )
 
-
 init_db()
 
+# ==========================================
+# 🛡️ TELEGRAM 安全校验核心依赖项
+# ==========================================
+def verify_telegram_init_data(init_data: str, bot_token: str) -> Optional[dict]:
+    """
+    严谨校验 Telegram 小程序的 initData 签名，并验证时效性
+    """
+    try:
+        parsed_data = dict(parse_qsl(init_data))
+        if "hash" not in parsed_data:
+            return None
+        
+        tg_hash = parsed_data.pop("hash")
+        
+        # 1. 检查凭证时效性，超过 24 小时判定为过期
+        auth_date = int(parsed_data.get("auth_date", 0))
+        if int(time.time()) - auth_date > 86400:
+            print("[安全警告] Telegram initData 凭证已过期")
+            return None
+            
+        # 2. 升序拼接参数计算签名
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
+        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        
+        if hmac.compare_digest(calculated_hash, tg_hash):
+            user_data_str = parsed_data.get("user")
+            if user_data_str:
+                return json.loads(user_data_str)
+        return None
+    except Exception as e:
+        print(f"[安全校验异常]: {e}")
+        return None
+
+async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> dict:
+    """
+    FastAPI 统一拦截器：防身份伪造
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="请重新从 Telegram 打开小程序以完成登录授权")
+    
+    init_data = authorization.split(" ", 1)[1]
+    user_info = verify_telegram_init_data(init_data, BOT_TOKEN)
+    if not user_info:
+        raise HTTPException(status_code=403, detail="身份认证已失效或数据已被非法篡改")
+        
+    return user_info
+
+# ==========================================
+# 工具函数保持原有逻辑不变
+# ==========================================
 def _sanitize_filename(filename: str) -> str:
     name = os.path.basename(filename)
     name = re.sub(r'[^A-Za-z0-9_.-]', '_', name)
     return name or f"upload_{uuid.uuid4().hex[:8]}"
-
 
 def _infer_media_type(source: str) -> str:
     lower = (source or "").lower()
@@ -198,7 +246,6 @@ def _infer_media_type(source: str) -> str:
     if lower.endswith('.jpg') or lower.endswith('.jpeg') or lower.endswith('.png'):
         return 'photo'
     return 'photo'
-
 
 def _compress_image(input_path: str, output_path: str):
     with Image.open(input_path) as img:
@@ -213,7 +260,6 @@ def _compress_image(input_path: str, output_path: str):
         if os.path.getsize(output_path) > 600 * 1024:
             img.save(output_path, optimize=True, quality=65)
     return output_path
-
 
 def _compress_gif(input_path: str, output_path: str):
     with Image.open(input_path) as gif:
@@ -238,7 +284,6 @@ def _compress_gif(input_path: str, output_path: str):
         )
     return output_path
 
-
 def _compress_video(input_path: str, output_path: str):
     command = [
         'ffmpeg',
@@ -261,10 +306,8 @@ def _compress_video(input_path: str, output_path: str):
         raise RuntimeError(f"ffmpeg 压缩失败: {completed.stderr.strip()}")
     return output_path
 
-
 def _build_upload_urls(filename: str) -> str:
     return f"https://www.kongjing.online/uploads/{filename}"
-
 
 def _merge_and_compress_chunks(upload_id: str, filename: str, total_chunks: int) -> str:
     chunk_dir = os.path.join(UPLOAD_DIR, 'tmp', _sanitize_filename(upload_id))
@@ -299,7 +342,6 @@ def _merge_and_compress_chunks(upload_id: str, filename: str, total_chunks: int)
 
     return final_filename
 
-
 def _extract_tg_file_id(response_json: dict, media_type: str) -> Optional[str]:
     result = response_json.get('result') or {}
     if media_type == 'photo':
@@ -313,7 +355,6 @@ def _extract_tg_file_id(response_json: dict, media_type: str) -> Optional[str]:
         animation = result.get('animation') or {}
         return animation.get('file_id')
     return result.get('message_id')
-
 
 def _send_telegram_media(chat_id: str, bot_token: str, media_type: str, media_source: str, caption: str = '', reply_markup: Optional[dict] = None) -> dict:
     telegram_api_base = f"https://api.telegram.org/bot{bot_token}"
@@ -346,7 +387,6 @@ def _send_telegram_media(chat_id: str, bot_token: str, media_type: str, media_so
         raise HTTPException(status_code=400, detail=f"Telegram发送失败: {response.text}")
     return response.json()
 
-
 @app.post("/upload/chunk")
 async def upload_chunk(
     file_chunk: UploadFile = File(...),
@@ -377,13 +417,11 @@ async def upload_chunk(
 
     return {"detail": "分片接收成功", "chunk_index": chunk_index}
 
-
 @app.post("/upload")
 def upload_file(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="缺少上传文件")
 
-    # 支持图片、视频、gif
     is_image = file.content_type.startswith("image/")
     is_video = file.content_type.startswith("video/")
     is_gif = file.name.lower().endswith('.gif') or file.content_type == 'image/gif'
@@ -393,7 +431,6 @@ def upload_file(file: UploadFile = File(...)):
 
     ext = os.path.splitext(file.filename)[1].lower()
     
-    # 扩展扩展名检查，支持视频格式
     if is_image:
         if ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
             ext = ".jpg"
@@ -412,20 +449,16 @@ def upload_file(file: UploadFile = File(...)):
 
     return {"url": f"https://www.kongjing.online/uploads/{file_name}"}
 
-# ---- 兼容前端的严谨数据模型 ----
+# ---- 数据模型定义 ----
 class CardInput(BaseModel):
     id: Optional[str] = None
     title: str
     content: str
     img: Optional[str] = None
     image: Optional[str] = None
-    media_type: Optional[str] = 'photo'  # 新增：photo、video、gif
+    media_type: Optional[str] = 'photo'
     buttons: Union[List[Any], dict, str] = "[]"
-    user_id: Optional[str] = None
-
-class UserLoginInput(BaseModel):
-    id: Any
-    username: Optional[str] = ""
+    user_id: Optional[str] = None  # 保留字段做向前兼容，核心校验以 Header 传入的为准
 
 class UpdateSettingsInput(BaseModel):
     user_id: Any
@@ -433,18 +466,22 @@ class UpdateSettingsInput(BaseModel):
     language: Optional[str] = None
 
 # ==========================================
-# 核心路由接口 (已去除 /api 前缀，完美适配 Nginx)
+# 核心路由接口 (移除前端传 ID 隐患，严格对齐原有变量)
 # ==========================================
 
 # 1. 获取所有卡片列表
 @app.get("/cards")
-def get_cards(user_id: Optional[str] = None):
-    if not user_id:
-        return []
+def get_cards(current_user: dict = Depends(get_current_tg_user)):
+    user_id = str(current_user.get("id"))
 
     with get_db_connection() as (_, cursor):
-        query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards WHERE user_id = %s"
-        cursor.execute(query, (str(user_id),))
+        # 兼容性设计：如果是超级管理员账号，允许查看所有人的卡片；否则只查自己绑定的卡片
+        if user_id == '8368521045':
+            query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards"
+            cursor.execute(query)
+        else:
+            query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards WHERE user_id = %s"
+            cursor.execute(query, (user_id,))
         rows = cursor.fetchall()
 
     result = []
@@ -463,7 +500,7 @@ def get_cards(user_id: Optional[str] = None):
             "content": row[4],
             "buttons": parsed_buttons,
             "user_id": row[10],
-            "media_type": row[11] or 'photo',  # 返回媒体类型
+            "media_type": row[11] or 'photo',
             "analytics": {
                 "views": row[6],
                 "shares": row[7],
@@ -473,15 +510,16 @@ def get_cards(user_id: Optional[str] = None):
         })
     return result
 
-# 2. 保存/更新卡片 (完美兼容带有路径 ID 的 POST 请求)
+# 2. 保存/更新卡片（【修复核心】：兼具内容模型与身份校验）
 @app.post("/cards")
-def save_card(data: CardInput):
+def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)):
     target_photo = data.img if data.img else (data.image if data.image else "")
     db_img = str(target_photo).strip()
 
-    incoming_user_id = str(data.user_id).strip() if data.user_id is not None else ""
-    if not incoming_user_id or incoming_user_id.lower() == "none" or incoming_user_id == "123456789":
-        raise HTTPException(status_code=400, detail="卡片保存失败：未能提取到有效的 Telegram 用户ID，请确认小程序登录状态。")
+    # 身份提取完全交给 get_current_tg_user，绝不相信前端传参
+    incoming_user_id = str(current_user.get("id")).strip()
+    if not incoming_user_id:
+        raise HTTPException(status_code=400, detail="卡片保存失败：未能提取到有效的 Telegram 用户ID")
 
     db_buttons = data.buttons
     if isinstance(db_buttons, (list, dict)):
@@ -489,7 +527,6 @@ def save_card(data: CardInput):
     else:
         db_buttons = str(db_buttons) if db_buttons is not None else "[]"
 
-    # 获取媒体类型，默认为 photo
     media_type = str(data.media_type).strip() if data.media_type else 'photo'
     if media_type not in ['photo', 'video', 'gif']:
         media_type = 'photo'
@@ -519,22 +556,19 @@ def save_card(data: CardInput):
                     )
             else:
                 card_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
-                with get_db_connection() as (_, cursor):
-                    cursor.execute(
-                        """
-                        INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (card_id, data.title, data.content, db_img, db_buttons, media_type, "草稿", incoming_user_id),
-                    )
+                cursor.execute(
+                    """
+                    INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (card_id, data.title, data.content, db_img, db_buttons, media_type, "草稿", incoming_user_id),
+                )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"数据库写入异常: {str(e)}")
 
     return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
 
-# ==========================================
-# ⚡ 黄金修复版：发布卡片接口（支持双向命名对齐）
-# ==========================================
+# 3. 发布卡片接口
 @app.post("/publish")
 def publish_card_with_tg_cache_and_quota(data: dict):
     card_id = str(data.get("card_id") or data.get("cardId") or "").strip()
@@ -698,6 +732,65 @@ def publish_card_with_tg_cache_and_quota(data: dict):
 
     return {"code": 200, "status": "success", "message": "卡片发布成功！", "is_cached": tg_file_id is not None}
 
+# 4. 用户登录接口（【严格保留原有变量对齐方案】）
+@app.post("/user/login")
+def user_login(current_user: dict = Depends(get_current_tg_user)):
+    telegram_id = str(current_user.get("id"))
+    username = str(current_user.get("username") or "")
+
+    with get_db_connection() as (_, cursor):
+        cursor.execute(
+            "SELECT telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
+            (telegram_id,),
+        )
+        row = cursor.fetchone()
+
+        if row:
+            role = row[2]
+            if telegram_id == '8368521045' and role != 'superuser':
+                role = 'superuser'
+                cursor.execute("UPDATE users SET role = %s WHERE telegram_id = %s", (role, telegram_id))
+            if row[1] != username:
+                cursor.execute("UPDATE users SET username = %s WHERE telegram_id = %s", (username, telegram_id))
+            
+            user = {
+                "id": row[0],
+                "telegram_id": row[0],
+                "username": username,
+                "role": role,
+                "vip_until": row[3],
+                "bot_token": row[4],
+                "bot_username": row[5],
+                "language": row[6] or 'zh',
+                "monthly_published_count": row[7],
+                "last_reset_month": row[8],
+            }
+        else:
+            role = 'superuser' if telegram_id == '8368521045' else 'user'
+            cursor.execute(
+                """
+                INSERT INTO users (id, telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month)
+                VALUES (%s, %s, %s, %s, 0, '', '', 'zh', 0, '')
+                """,
+                (telegram_id, telegram_id, username, role),
+            )
+            
+            user = {
+                "id": telegram_id,
+                "telegram_id": telegram_id,
+                "username": username,
+                "role": role,
+                "vip_until": 0,
+                "bot_token": "",
+                "bot_username": "",
+                "language": "zh",
+                "monthly_published_count": 0,
+                "last_reset_month": "",
+            }
+
+    return user
+
+# 后续所有的 VIP 充值回调、卡片详情、预览、删除等业务路由，完美保持原样不变...
 @app.post("/vip/create_invoice")
 def create_invoice(data: dict):
     telegram_id = str(data.get("telegram_id") or data.get("telegramId") or "").strip()
@@ -763,67 +856,6 @@ def card_share(card_id: str):
     with get_db_connection() as (_, cursor):
         cursor.execute("UPDATE cards SET shares = shares + 1 WHERE id = %s", (card_id,))
     return {"code": 200, "status": "success", "message": "分享计数已更新"}
-
-@app.post("/user/login")
-def user_login(data: UserLoginInput):  # 1. 严格保留你原本的输入模型名称
-    telegram_id = str(data.id)
-    username = str(data.username or "")
-
-    with get_db_connection() as (_, cursor):
-        cursor.execute(
-            "SELECT telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
-            (telegram_id,),
-        )
-        row = cursor.fetchone()
-
-        if row:
-            # ------- 2. 严格保留老用户的超级用户判定和名字更新逻辑 -------
-            role = row[2]
-            if telegram_id == '8368521045' and role != 'superuser':
-                role = 'superuser'
-                cursor.execute("UPDATE users SET role = %s WHERE telegram_id = %s", (role, telegram_id))
-            if row[1] != username:
-                cursor.execute("UPDATE users SET username = %s WHERE telegram_id = %s", (username, telegram_id))
-            
-            user = {
-                "id": row[0],
-                "telegram_id": row[0],
-                "username": username,
-                "role": role,
-                "vip_until": row[3],
-                "bot_token": row[4],
-                "bot_username": row[5],
-                "language": row[6] or 'zh',
-                "monthly_published_count": row[7],
-                "last_reset_month": row[8],
-            }
-        else:
-            # ------- 3. 严格保留新用户的超级用户判定 -------
-            role = 'superuser' if telegram_id == '8368521045' else 'user'
-            
-            # 【核心修复点】：在 INSERT 的字段和 VALUES 里，显式把 id 补进去，彻底干掉 PostgreSQL 的 NotNullViolation 报错
-            cursor.execute(
-                """
-                INSERT INTO users (id, telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month)
-                VALUES (%s, %s, %s, %s, 0, '', '', 'zh', 0, '')
-                """,
-                (telegram_id, telegram_id, username, role), # 让第一个参数 id 和第二个参数 telegram_id 同样绑定 telegram_id
-            )
-            
-            user = {
-                "id": telegram_id,
-                "telegram_id": telegram_id,
-                "username": username,
-                "role": role,
-                "vip_until": 0,
-                "bot_token": "",
-                "bot_username": "",
-                "language": "zh",
-                "monthly_published_count": 0,
-                "last_reset_month": "",
-            }
-
-    return user
 
 async def fetch_bot_username(bot_token: str):
     telegram_api = f"https://api.telegram.org/bot{bot_token}/getMe"
@@ -904,7 +936,6 @@ async def update_settings(data: UpdateSettingsInput):
         "last_reset_month": row[8],
     }
 
-# 3. 获取单张卡片详情
 @app.get("/cards/{card_id}")
 def get_card(card_id: str):
     with get_db_connection() as (_, cursor):
@@ -930,7 +961,7 @@ def get_card(card_id: str):
         "image": row[3],
         "content": row[4],
         "buttons": parsed_buttons,
-        "media_type": row[10] or 'photo',  # 返回媒体类型
+        "media_type": row[10] or 'photo',
         "analytics": {
             "views": row[6],
             "shares": row[7],
@@ -939,7 +970,6 @@ def get_card(card_id: str):
         },
     }
 
-# 4. 删除卡片
 @app.delete("/cards/{card_id}")
 def delete_card(card_id: str):
     with get_db_connection() as (_, cursor):

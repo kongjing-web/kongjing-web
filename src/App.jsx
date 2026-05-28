@@ -15,6 +15,20 @@ import {
 // ==========================================================================
 const BASE_URL = "https://www.kongjing.online/api".replace(/\/+$/, ""); // 去除尾部斜杠，避免拼接时出现 //api//user
 
+const getAuthHeaders = (contentType = null) => {
+  const headers = {};
+  if (contentType) {
+    headers['Content-Type'] = contentType;
+  }
+
+  const initData = window.Telegram?.WebApp?.initData || "";
+  if (initData) {
+    headers.Authorization = `Bearer ${initData}`;
+  }
+
+  return headers;
+};
+
 export default function App() {
   // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings'
   const [currentScreen, setCurrentScreen] = useState('home');
@@ -35,11 +49,8 @@ export default function App() {
     try {
       const response = await fetch(`${BASE_URL}/user/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: currentUser.id,
-          username: currentUser.username || ''
-        }),
+        headers: getAuthHeaders('application/json'),
+        body: JSON.stringify({}),
       });
       if (!response.ok) return;
       const userInfo = await response.json();
@@ -53,15 +64,12 @@ export default function App() {
 
   // 2. 强效防御型的数据获取逻辑
   const fetchCards = async () => {
-    if (!currentUser?.id) {
-      setCards([]);
-      return;
-    }
     setLoading(true);
     setError(null);
     try {
-        const url = `${BASE_URL}/cards?user_id=${currentUser.id}`;
-        const response = await fetch(url);
+        const response = await fetch(`${BASE_URL}/cards`, {
+          headers: getAuthHeaders(),
+        });
         if (!response.ok) throw new Error('网络响应异常');
         const data = await response.json();
 
@@ -132,11 +140,8 @@ export default function App() {
 
         const response = await fetch(`${BASE_URL}/user/login`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: telegramUser.id.toString(),
-            username: telegramUser.username || 'TG用户'
-          }),
+          headers: getAuthHeaders('application/json'),
+          body: JSON.stringify({}),
         });
 
         if (!response.ok) {
@@ -184,14 +189,13 @@ export default function App() {
         title: cardData.title ?? '',
         content: cardData.content ?? '',
         img: cardData.img ?? '',
-        media_type: cardData.media_type ?? 'photo',  // 新增：保存媒体类型
-        buttons: typeof cardData.buttons === 'string' ? cardData.buttons : JSON.stringify(cardData.buttons || []),
-        user_id: currentUser?.id?.toString()
+        media_type: cardData.media_type ?? 'photo',
+        buttons: typeof cardData.buttons === 'string' ? cardData.buttons : JSON.stringify(cardData.buttons || [])
       };
 
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders('application/json'),
         body: JSON.stringify(payload)
       });
 
@@ -306,7 +310,10 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
   const handleDeleteCard = async (id) => {
     if (window.confirm("确定要删除这张卡片并清除其所有链接和数据统计吗？")) {
       try {
-        const response = await fetch(`${BASE_URL}/cards/${id}`, { method: 'DELETE' });
+        const response = await fetch(`${BASE_URL}/cards/${id}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders(),
+        });
         if (response.ok) {
           setCards(cards.filter(c => c.id !== id));
           setActiveCardId(null);
@@ -327,7 +334,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
     try {
       const response = await fetch(`${BASE_URL}/publish`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders('application/json'),
         body: JSON.stringify({
           cardId: card.id
         })
@@ -503,7 +510,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
     try {
       const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders('application/json'),
         body: JSON.stringify({ telegram_id: currentUser.id })
       });
       if (!response.ok) {
@@ -603,7 +610,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
 
       const response = await fetch(`${BASE_URL}/user/update_settings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders('application/json'),
         body: JSON.stringify(payload),
       });
 
@@ -745,6 +752,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     try {
       const response = await fetch(`${BASE_URL}/upload`, {
         method: 'POST',
+        headers: getAuthHeaders(),
         body: formData,
       });
 
