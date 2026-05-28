@@ -709,9 +709,20 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   }); 
   const [activeBtnId, setActiveBtnId] = useState(null);
   const [gridConfig, setGridConfig] = useState({ rows: 1, cols: 2 });
-  const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { remoteUrl: cardToEdit.img, type: cardToEdit.media_type || 'photo', uploading: false } : null);
-  const [bubbleWidth, setBubbleWidth] = useState(320);
+  const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { remoteUrl: cardToEdit.img, type: cardToEdit.media_type || 'photo', uploading: false } : null); 
+  // ---- 新增：用于完美复刻 Telegram 气泡宽度对齐的逻辑 ----
+  const [tgRenderedWidth, setTgRenderedWidth] = useState(330);
+  const tgImgRef = useRef(null);
+  const image = mediaFile?.previewUrl || mediaFile?.remoteUrl || '';
 
+  const handleTgImageLoad = () => {
+    if (tgImgRef.current) {
+      const currentWidth = tgImgRef.current.clientWidth;
+      setTgRenderedWidth(Math.min(Math.max(currentWidth, 150), 330));
+    }
+  };
+  // ----------------------------------------------------
+  
   const fileInputRef = useRef(null);
   const emojiList = [
     "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓","🤗","🤔","🤭","🤫","🤥","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","👹","👺","🤡","💩","👻","💀","☠️","👽","👾","🤖","🎃","😺","😸","😹","😻","😼","😽","🙀","😾"
@@ -728,6 +739,12 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       attributes: { class: 'focus:outline-none min-h-[140px] text-[15px] leading-[1.4] text-[#000000] max-w-none break-words whitespace-pre-wrap font-sans' },
     },
   });
+
+  useEffect(() => {
+    if (!image) {
+      setTgRenderedWidth(330);
+    }
+  }, [image]);
 
   // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
   const handleMediaChange = async (e) => {
@@ -851,70 +868,85 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   ];
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-[435px] flex-col overflow-hidden border-x border-gray-200 bg-[#E7EBF0] text-gray-800">
-      <div className="z-30 flex items-center justify-between border-b border-gray-200 bg-white p-4 shadow-sm">
-        <span className="cursor-pointer px-2 text-xl font-bold text-gray-400" onClick={onBack}>{"<"}</span>
+    <div className="flex flex-col h-screen bg-[#E7EBF0] text-gray-800 max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
+      <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
+        <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
         <h1 className="text-sm font-bold text-gray-700">原生卡片配置</h1>
-        <button onClick={triggerPublish} className="rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold text-white shadow-md active:scale-95 transition-transform">保存卡片</button>
+        <button onClick={triggerPublish} className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md active:scale-95 transition-transform">保存卡片</button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-28 pt-4">
-        <div className="mx-auto w-fit max-w-[330px]">
-          <div
-            className="w-full overflow-hidden rounded-[28px] border border-gray-100 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
-            style={{ width: `${Math.min(330, bubbleWidth || 320)}px`, maxWidth: '330px' }}
-          >
-            <div className="flex items-center justify-between border-b border-gray-50 bg-slate-50/70 p-3">
-              <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-gray-400">TELEGRAM MEDIA FILE</span>
-              <button onClick={() => fileInputRef.current.click()} className="text-xs font-bold text-blue-500 hover:underline">
-                {mediaFile ? '替换素材' : '+ 添加图片/视频'}
-              </button>
-              <input type="file" ref={fileInputRef} onChange={handleMediaChange} accept="image/*,video/*" className="hidden" />
-            </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-80">
+        <div className="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 relative">
+          <div className="p-3 border-b border-gray-50 bg-slate-50/50 flex justify-between items-center">
+            <span className="text-[11px] text-gray-400 font-bold">TELEGRAM MEDIA FILE</span>
+            <button onClick={() => fileInputRef.current.click()} className="text-xs text-blue-500 font-bold hover:underline">
+              {mediaFile ? '替换素材' : '+ 添加图片/视频'}
+            </button>
+            <input type="file" ref={fileInputRef} onChange={handleMediaChange} accept="image/*,video/*" className="hidden" />
+          </div>
 
-            {mediaFile && (
-              <div className="relative w-full overflow-hidden bg-white">
-                {mediaFile.type === 'video' ? (
-                  <video
-                    src={mediaFile.previewUrl || mediaFile.remoteUrl}
-                    controls
-                    onLoadedMetadata={(e) => setBubbleWidth(Math.min(330, e.currentTarget.videoWidth || 320))}
-                    className="w-full h-auto object-cover"
-                  />
+          <div className="p-4 bg-white">
+            <div className="w-full max-w-[330px] bg-white rounded-[15px] shadow-sm overflow-hidden flex flex-col mx-auto border border-gray-100">
+              <div className="w-full max-h-[380px] min-h-[160px] bg-[#f4f4f7] flex items-center justify-center overflow-hidden relative">
+                {mediaFile ? (
+                  mediaFile.type === 'video' ? (
+                    <video
+                      ref={tgImgRef}
+                      src={mediaFile.previewUrl || mediaFile.remoteUrl}
+                      controls
+                      onLoadedData={handleTgImageLoad}
+                      className="w-auto h-auto max-w-full max-h-[380px] object-contain"
+                    />
+                  ) : (
+                    <img
+                      ref={tgImgRef}
+                      src={mediaFile.previewUrl || mediaFile.remoteUrl}
+                      onLoad={handleTgImageLoad}
+                      alt="Telegram Card Media"
+                      className="w-auto h-auto max-w-full max-h-[380px] object-contain"
+                    />
+                  )
                 ) : (
-                  <img
-                    src={mediaFile.previewUrl || mediaFile.remoteUrl}
-                    onLoad={(e) => setBubbleWidth(Math.min(330, e.currentTarget.naturalWidth || 320))}
-                    className="w-full h-auto object-cover"
-                    alt=""
-                  />
-                )}
-                <button onClick={() => setMediaFile(null)} className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-xs text-white">✕</button>
-              </div>
-            )}
-
-            <div className="min-h-[160px] bg-white p-4">
-              <EditorContent editor={editor} onFocus={() => setShowMenu(false)} />
-            </div>
-
-            {buttons.length > 0 && (
-              <div className="border-t border-gray-50 bg-slate-50/60 p-2.5" style={{ display: 'grid', gridTemplateColumns: `repeat(${gridConfig.cols}, minmax(0, 1fr))`, gap: '0.375rem' }}>
-                {buttons.map(btn => (
-                  <div
-                    key={btn.id}
-                    onClick={() => { setActiveBtnId(btn.id); setMenuView('editBtn'); setShowMenu(true); }}
-                    className={`rounded-xl border px-1 py-2 text-center text-[11px] font-bold transition-all cursor-pointer ${activeBtnId === btn.id ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-gray-200 bg-white text-gray-500'}`}
-                  >
-                    {btn.text || '未命名'}
+                  <div className="flex flex-col items-center justify-center text-gray-400 text-xs gap-1 py-10">
+                    <span>暂无图片/视频</span>
+                    <span className="text-[10px] text-gray-300">模拟最大显示宽: 330px</span>
                   </div>
-                ))}
+                )}
+                {mediaFile && (
+                  <button onClick={() => setMediaFile(null)} className="absolute top-2 right-2 bg-black/60 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">✕</button>
+                )}
               </div>
-            )}
+
+              <div style={{ width: `${tgRenderedWidth}px` }} className="mx-auto flex flex-col transition-all duration-200">
+                <div className="px-3 py-2 text-[15px] text-[#1f1f1f] leading-[1.35] break-words text-left w-full">
+                  <div
+                    dangerouslySetInnerHTML={{ __html: editor?.getHTML() || '<p class="text-gray-400">输入说明文字...</p>' }}
+                    className="prose prose-sm max-w-none tg-caption-style"
+                  />
+                </div>
+
+                {buttons.length > 0 && (
+                  <div className="p-1.5 pt-0 space-y-1.5 bg-white w-full">
+                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${gridConfig.cols}, 1fr)` }}>
+                      {buttons.map(btn => (
+                        <div
+                          key={btn.id}
+                          onClick={() => { setActiveBtnId(btn.id); setMenuView('editBtn'); setShowMenu(true); }}
+                          className={`py-2 px-1 rounded-[7px] text-center text-[14px] font-medium border transition-all cursor-pointer ${activeBtnId === btn.id ? 'border-blue-500 bg-blue-50 text-blue-600' : 'bg-[#f1f5f9] border-transparent text-[#2481cc]'}`}
+                        >
+                          {btn.text || '未命名'}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="sticky bottom-0 left-0 right-0 z-40 flex flex-col border-t border-gray-200 bg-white shadow-2xl transition-all duration-300">
+      <div className="absolute bottom-0 left-0 right-0 bg-white border-t flex flex-col z-40 shadow-2xl transition-all duration-300">
         <div className="p-3 flex items-center gap-3 shrink-0 border-b border-gray-50">
           <div className="flex-1 bg-gray-100 rounded-full px-4 py-2 text-xs font-medium text-gray-400">
             {buttons.length > 0 ? `当前卡片已配置 ${buttons.length} 个底部矩阵按钮` : '点击右侧按钮配置卡片格式与底层矩阵...'}
@@ -999,76 +1031,35 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
    ========================================================================== */
 function PreviewScreen({ card, onBack }) {
   if (!card) return null;
-
-  const [bubbleWidth, setBubbleWidth] = useState(320);
-
-  const normalizeButtons = () => {
-    let buttons = card.buttons;
-
-    if (typeof buttons === 'string') {
-      try {
-        buttons = JSON.parse(buttons);
-      } catch {
-        return [];
-      }
-    }
-
-    if (!Array.isArray(buttons)) return [];
-    if (Array.isArray(buttons[0])) return buttons;
-    return [buttons];
-  };
-
-  const buttonRows = normalizeButtons();
-
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-[435px] flex-col overflow-hidden border-x border-gray-200 bg-[#E7EBF0] text-gray-800">
-      <div className="z-30 flex items-center justify-between border-b border-gray-200 bg-white p-4 shadow-sm">
-        <span className="cursor-pointer px-2 text-xl font-bold text-gray-400" onClick={onBack}>{"<"}</span>
-        <h1 className="text-sm font-bold text-gray-700">卡片效果预览</h1>
-        <div className="w-10" />
+    <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
+      <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
+        <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
+        <h1 className="text-md font-medium text-gray-700">卡片效果预览</h1>
+        <div className="w-10"></div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-8 pt-4">
-        <div className="mx-auto w-fit max-w-[330px]">
-          <div
-            className="w-full overflow-hidden rounded-[28px] border border-gray-100 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
-            style={{ width: `${Math.min(330, bubbleWidth || 320)}px`, maxWidth: '330px' }}
-          >
-            {card.img && (
-              <div className="w-full overflow-hidden bg-black">
-                <img
-                  src={card.img}
-                  onLoad={(e) => setBubbleWidth(Math.min(330, e.currentTarget.naturalWidth || 320))}
-                  className="w-full h-auto object-cover"
-                  alt=""
-                />
-              </div>
-            )}
-
-            <div className="min-h-[120px] bg-white p-4 text-[15px] leading-[1.45] text-black break-words font-sans select-none">
-              <div dangerouslySetInnerHTML={{ __html: card.content || '<p>暂无正文内容</p>' }} />
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="text-center text-xs text-gray-400 my-2">今天</div>
+        
+        <div className="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+          {card.img && (
+            <div className="w-full bg-black flex items-center justify-center">
+              <img src={card.img} className="w-full max-h-[260px] object-contain" alt="" />
             </div>
-
-            {buttonRows.length > 0 && (
-              <div className="border-t border-gray-50 bg-slate-50/70 p-2.5 space-y-1.5">
-                {buttonRows.map((row, rowIndex) => (
-                  <div key={`row-${rowIndex}`} className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.max(1, row.length)}, minmax(0, 1fr))` }}>
-                    {row.map((btn) => (
-                      <a
-                        key={btn.id || `${rowIndex}-${btn.text}`}
-                        href={btn.url || '#placeholder'}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block truncate rounded-xl border border-gray-200 bg-white px-2 py-2 text-center text-[11px] font-bold text-[#24A1DE] shadow-sm hover:bg-slate-100"
-                      >
-                        {btn.text || '按钮'}
-                      </a>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
+          )}
+          <div className="p-3 text-[15px] leading-[1.4] text-black break-words font-sans space-y-2 select-none">
+            <div dangerouslySetInnerHTML={{ __html: card.content }} />
           </div>
+          {card.buttons && card.buttons.length > 0 && (
+            <div className="p-2 border-t border-gray-50 bg-white grid gap-1.5" style={{ gridTemplateColumns: `repeat(${card.buttons.length > 1 ? 2 : 1}, 1fr)` }}>
+              {card.buttons.map(btn => (
+                <a key={btn.id} href={btn.url || "#placeholder"} target="_blank" rel="noopener noreferrer" className="py-2 px-1 bg-[#F1F5F9] rounded-md text-center text-[13px] text-[#24A1DE] font-normal truncate block shadow-sm hover:bg-slate-100">
+                  {btn.text}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
