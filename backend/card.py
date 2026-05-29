@@ -647,6 +647,50 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
 
     return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
 
+def _clean_inline_keyboard(raw_buttons: Any) -> List[List[dict]]:
+    """过滤为 Telegram 官方 inline_keyboard 结构，只保留官方字段。"""
+    if isinstance(raw_buttons, dict):
+        raw_buttons = [raw_buttons]
+
+    if not isinstance(raw_buttons, list):
+        return []
+
+    if raw_buttons and all(isinstance(row, list) for row in raw_buttons):
+        matrix = raw_buttons
+    else:
+        matrix = [raw_buttons]
+
+    cleaned_rows = []
+    for row in matrix:
+        if not isinstance(row, list):
+            row = [row]
+
+        cleaned_row = []
+        for btn in row:
+            if not isinstance(btn, dict):
+                continue
+
+            official_btn = {"text": str(btn.get("text") or btn.get("label") or "按钮")}
+            if isinstance(btn.get("url"), str) and btn.get("url"):
+                official_btn["url"] = btn["url"]
+            if isinstance(btn.get("web_app"), dict) and isinstance(btn["web_app"].get("url"), str) and btn["web_app"]["url"]:
+                official_btn["web_app"] = {"url": btn["web_app"]["url"]}
+            if btn.get("callback_data") is not None:
+                official_btn["callback_data"] = str(btn["callback_data"])
+            if btn.get("switch_inline_query") is not None:
+                official_btn["switch_inline_query"] = str(btn["switch_inline_query"])
+            if btn.get("pay") is True:
+                official_btn["pay"] = True
+
+            if len(official_btn) > 1:
+                cleaned_row.append(official_btn)
+
+        if cleaned_row:
+            cleaned_rows.append(cleaned_row)
+
+    return cleaned_rows
+
+
 # 3. 发布卡片接口
 @app.post("/publish")
 def publish_card_with_tg_cache_and_quota(data: dict):
@@ -704,17 +748,8 @@ def publish_card_with_tg_cache_and_quota(data: dict):
     except Exception:
         buttons_data = []
 
-    if isinstance(buttons_data, dict):
-        buttons_data = [buttons_data]
-
-    if isinstance(buttons_data, list) and buttons_data and all(isinstance(row, list) for row in buttons_data):
-        inline_keyboard = buttons_data
-    elif isinstance(buttons_data, list) and buttons_data and all(isinstance(btn, dict) for btn in buttons_data):
-        inline_keyboard = [buttons_data]
-    else:
-        inline_keyboard = []
-
-    reply_markup = {"inline_keyboard": inline_keyboard} if inline_keyboard else None
+    clean_keyboard = _clean_inline_keyboard(buttons_data)
+    reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
     clean_content = re.sub(r'<p\s*>', '', content or '')
     clean_content = re.sub(r'</p\s*>', '\n', clean_content)
     caption_text = f"<b>{title}</b>\n\n{clean_content}"
@@ -733,42 +768,48 @@ def publish_card_with_tg_cache_and_quota(data: dict):
     try:
         if tg_file_id:
             if media_type == 'video':
-                payload = {"chat_id": chat_id, "video": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
+                video_value = tg_file_id if tg_file_id else img
+                payload = {"chat_id": chat_id, "video": video_value, "caption": caption_text, "parse_mode": "HTML"}
                 if reply_markup:
-                    payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                    payload["reply_markup"] = reply_markup
                 res = requests.post(f"{telegram_api_base}/sendVideo", json=payload, timeout=15)
             elif media_type == 'gif':
-                payload = {"chat_id": chat_id, "animation": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
+                gif_value = tg_file_id if tg_file_id else img
+                payload = {"chat_id": chat_id, "animation": gif_value, "caption": caption_text, "parse_mode": "HTML"}
                 if reply_markup:
-                    payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                    payload["reply_markup"] = reply_markup
                 res = requests.post(f"{telegram_api_base}/sendAnimation", json=payload, timeout=15)
             else:
-                payload = {"chat_id": chat_id, "photo": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
+                photo_value = tg_file_id if tg_file_id else img
+                payload = {"chat_id": chat_id, "photo": photo_value, "caption": caption_text, "parse_mode": "HTML"}
                 if reply_markup:
-                    payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                    payload["reply_markup"] = reply_markup
                 res = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
             response_data = res
         else:
             if img and str(img).strip() != "":
                 if media_type == 'video':
-                    payload = {"chat_id": chat_id, "video": img, "caption": caption_text, "parse_mode": "HTML"}
+                    video_value = tg_file_id if tg_file_id else img
+                    payload = {"chat_id": chat_id, "video": video_value, "caption": caption_text, "parse_mode": "HTML"}
                     if reply_markup:
-                        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                        payload["reply_markup"] = reply_markup
                     res = requests.post(f"{telegram_api_base}/sendVideo", json=payload, timeout=15)
                 elif media_type == 'gif':
-                    payload = {"chat_id": chat_id, "animation": img, "caption": caption_text, "parse_mode": "HTML"}
+                    gif_value = tg_file_id if tg_file_id else img
+                    payload = {"chat_id": chat_id, "animation": gif_value, "caption": caption_text, "parse_mode": "HTML"}
                     if reply_markup:
-                        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                        payload["reply_markup"] = reply_markup
                     res = requests.post(f"{telegram_api_base}/sendAnimation", json=payload, timeout=15)
                 else:
-                    payload = {"chat_id": chat_id, "photo": img, "caption": caption_text, "parse_mode": "HTML"}
+                    photo_value = tg_file_id if tg_file_id else img
+                    payload = {"chat_id": chat_id, "photo": photo_value, "caption": caption_text, "parse_mode": "HTML"}
                     if reply_markup:
-                        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                        payload["reply_markup"] = reply_markup
                     res = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
             else:
                 payload = {"chat_id": chat_id, "text": caption_text, "parse_mode": "HTML"}
                 if reply_markup:
-                    payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                    payload["reply_markup"] = reply_markup
                 res = requests.post(f"{telegram_api_base}/sendMessage", json=payload, timeout=15)
 
             response_data = res
@@ -793,6 +834,8 @@ def publish_card_with_tg_cache_and_quota(data: dict):
                     print(f"[警告] 提取或写入 tg_file_id 失败: {str(cache_err)}")
 
         if not response_data.ok:
+            print("[Telegram Publish] status:", response_data.status_code)
+            print("[Telegram Publish] body:", response_data.text)
             raise HTTPException(status_code=400, detail=f"Telegram推送失败。请确认您在TG中开启并/start了机器人。错误原因: {response_data.text}")
     except requests.exceptions.RequestException as req_err:
         raise HTTPException(status_code=502, detail=f"连接 Telegram 官方服务超时，请重试: {str(req_err)}")
