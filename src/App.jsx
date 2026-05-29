@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
+import { Mark } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
@@ -694,31 +695,93 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
 function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [showMenu, setShowMenu] = useState(false);
   const [menuView, setMenuView] = useState('main'); 
-  
-  // 修复：buttons 可能是字符串，需要 JSON.parse
-  const [buttons, setButtons] = useState(() => {
-    if (!cardToEdit) return [];
-    if (typeof cardToEdit.buttons === 'string') {
-      try {
-        return JSON.parse(cardToEdit.buttons);
-      } catch {
-        return [];
+  const [showBtnModal, setShowBtnModal] = useState(false);
+  const [editingButtonPos, setEditingButtonPos] = useState(null);
+  const [btnDraft, setBtnDraft] = useState({ text: '', value: '', btnType: 'url' });
+
+  const normalizeButtons = (rawButtons) => {
+    const parseValue = (value) => {
+      if (typeof value === 'string') {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
       }
+      return value;
+    };
+
+    const raw = parseValue(rawButtons);
+    if (Array.isArray(raw) && raw.length > 0 && raw.every((item) => Array.isArray(item))) {
+      return raw.map((row) => row.map((btn) => ({
+        id: btn?.id || `${Date.now()}-${Math.random()}`,
+        text: btn?.text || btn?.label || '按钮',
+        type: btn?.type || (btn?.url ? 'url' : btn?.web_app ? 'web_app' : btn?.callback_data ? 'callback' : btn?.switch_inline_query ? 'switch' : btn?.pay ? 'pay' : 'url'),
+        url: btn?.url || '',
+        web_app: btn?.web_app || null,
+        callback_data: btn?.callback_data || '',
+        switch_inline_query: btn?.switch_inline_query || '',
+        pay: Boolean(btn?.pay),
+      })));
     }
-    return Array.isArray(cardToEdit.buttons) ? cardToEdit.buttons : [];
-  }); 
+
+    const list = Array.isArray(raw) ? raw : [];
+    if (list.length === 0) return [];
+    return [list.map((btn) => ({
+      id: btn?.id || `${Date.now()}-${Math.random()}`,
+      text: btn?.text || btn?.label || '按钮',
+      type: btn?.type || (btn?.url ? 'url' : btn?.web_app ? 'web_app' : btn?.callback_data ? 'callback' : btn?.switch_inline_query ? 'switch' : btn?.pay ? 'pay' : 'url'),
+      url: btn?.url || '',
+      web_app: btn?.web_app || null,
+      callback_data: btn?.callback_data || '',
+      switch_inline_query: btn?.switch_inline_query || '',
+      pay: Boolean(btn?.pay),
+    }))];
+  };
+
+  const [buttons, setButtons] = useState(() => normalizeButtons(cardToEdit?.buttons));
   const [activeBtnId, setActiveBtnId] = useState(null);
   const [gridConfig, setGridConfig] = useState({ rows: 1, cols: 2 });
   const [mediaFile, setMediaFile] = useState(cardToEdit && cardToEdit.img ? { remoteUrl: cardToEdit.img, type: cardToEdit.media_type || 'photo', uploading: false } : null); 
   
   const fileInputRef = useRef(null);
+  const SpoilerMark = Mark.create({
+    name: 'spoiler',
+    addAttributes() {
+      return {
+        'data-spoiler': {
+          default: 'true',
+        },
+      };
+    },
+    parseHTML() {
+      return [
+        { tag: 'tg-spoiler' },
+        { tag: 'span[data-spoiler="true"]' },
+      ];
+    },
+    renderHTML({ HTMLAttributes }) {
+      return ['span', { ...HTMLAttributes, class: 'spoiler-mark', style: 'filter: blur(4px); cursor: help;' }, 0];
+    },
+  });
   const emojiList = [
     "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓","🤗","🤔","🤭","🤫","🤥","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","👹","👺","🤡","💩","👻","💀","☠️","👽","👾","🤖","🎃","😺","😸","😹","😻","😼","😽","🙀","😾"
   ];
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ heading: false, horizontalRule: false, link: false, underline: false }),
+      StarterKit.configure({
+        heading: false,
+        horizontalRule: false,
+        link: false,
+        underline: false,
+        code: {
+          HTMLAttributes: {
+            class: 'bg-gray-100 text-red-500 px-1.5 py-0.5 rounded font-mono text-sm cursor-pointer mx-0.5',
+          },
+        },
+      }),
       Underline,
+      SpoilerMark,
       Link.configure({ openOnClick: false, HTMLAttributes: { class: 'text-blue-500 underline pointer-events-none' } }),
       Placeholder.configure({ placeholder: '输入卡片正文内容...' }),
     ],
@@ -783,6 +846,10 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const triggerPublish = () => {
     if (!editor) return;
 
+    const normalizedButtons = Array.isArray(buttons) && buttons.some((row) => Array.isArray(row))
+      ? buttons
+      : (Array.isArray(buttons) ? [buttons] : []);
+
     // 改为判断 uploading 状态，而不是只针对图片
     if (mediaFile?.uploading) {
       alert('媒体文件正在上传，请稍后再保存');
@@ -795,7 +862,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       title: pureText.length > 0 ? pureText : "未命名 Telegram 原生卡片",
       status: cardToEdit ? cardToEdit.status : "草稿",
       content: editor.getHTML(),
-      buttons: buttons,
+      buttons: normalizedButtons,
       img: mediaFile?.remoteUrl || "",  // 禁止保存 blob URL，只保存公网地址或空字符串
       media_type: mediaFile?.type || 'photo',  // 同时保存媒体类型
       analytics: cardToEdit ? cardToEdit.analytics : { views: 0, shares: 0, likes: 0, clicks: 0 }
@@ -813,6 +880,8 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       case '下划线': editor.chain().toggleUnderline().run(); break;
       case '删除线': editor.chain().toggleStrike().run(); break;
       case '引用': editor.chain().toggleBlockquote().run(); break;
+      case '一键复制': editor.chain().focus().toggleCode().run(); break;
+      case '防剧透': editor.chain().focus().toggleMark('spoiler').run(); break;
       case '清除格式': editor.chain().unsetAllMarks().clearNodes().run(); break;
       case '表情': setMenuView('emoji'); break;
       case '内嵌链接':
@@ -832,18 +901,56 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   };
 
   const generateGrid = () => {
-    const newBtns = [];
-    for (let i = 0; i < (parseInt(gridConfig.rows) || 1) * (parseInt(gridConfig.cols) || 2); i++) {
-      newBtns.push({ id: Date.now() + i, text: `按钮 ${i + 1}`, url: 'https://t.me' });
+    const rows = Math.max(1, parseInt(gridConfig.rows) || 1);
+    const cols = Math.max(1, parseInt(gridConfig.cols) || 2);
+    const matrix = [];
+    for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+      const row = [];
+      for (let colIndex = 0; colIndex < cols; colIndex += 1) {
+        const btnIndex = rowIndex * cols + colIndex;
+        row.push({ id: Date.now() + btnIndex, text: `按钮 ${btnIndex + 1}`, type: 'url', url: 'https://t.me' });
+      }
+      matrix.push(row);
     }
-    setButtons(newBtns);
+    setButtons(matrix);
     setMenuView('main');
+  };
+
+  const saveButtonConfig = () => {
+    if (!editingButtonPos) return;
+    const { rowIndex, colIndex } = editingButtonPos;
+    const rawText = (btnDraft.text || '').trim();
+    let rawValue = (btnDraft.value || '').trim();
+
+    if (btnDraft.btnType === 'url' || btnDraft.btnType === 'web_app') {
+      if (!/^https?:\/\//i.test(rawValue)) rawValue = `https://${rawValue}`;
+    }
+    if (btnDraft.btnType === 'switch' && rawValue && !rawValue.startsWith('@')) {
+      rawValue = `@${rawValue}`;
+    }
+
+    const nextButton = {
+      id: buttons[rowIndex]?.[colIndex]?.id || `${Date.now()}-${rowIndex}-${colIndex}`,
+      text: rawText || '按钮',
+      type: btnDraft.btnType,
+    };
+
+    if (btnDraft.btnType === 'url') nextButton.url = rawValue;
+    if (btnDraft.btnType === 'web_app') nextButton.web_app = { url: rawValue };
+    if (btnDraft.btnType === 'callback') nextButton.callback_data = rawValue;
+    if (btnDraft.btnType === 'switch') nextButton.switch_inline_query = rawValue;
+    if (btnDraft.btnType === 'pay') nextButton.pay = true;
+
+    setButtons((prev) => prev.map((row, r) => r === rowIndex ? row.map((btn, c) => c === colIndex ? nextButton : btn) : row));
+    setShowBtnModal(false);
+    setEditingButtonPos(null);
   };
 
   const menuItems = [
     { icon: "B", label: "加粗", active: 'bold' }, { icon: "I", label: "斜体", active: 'italic' },
     { icon: "U", label: "下划线", active: 'underline' }, { icon: "S", label: "删除线", active: 'strike' },
-    { icon: "😀", label: "表情" }, { icon: "🔗", label: "内嵌链接", active: 'link' },
+    { icon: "�", label: "一键复制" }, { icon: "🫥", label: "防剧透" },
+    { icon: "�😀", label: "表情" }, { icon: "🔗", label: "内嵌链接", active: 'link' },
     { icon: "🔘", label: "按钮" }, { icon: "↗", label: "外部链接" },
     { icon: "—", label: "引用", active: 'blockquote' }, { icon: "扫", label: "清除格式" },
     { icon: "↩", label: "撤销" }, { icon: "↪", label: "重做" }
@@ -877,24 +984,89 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
           )}
 
           <div className="p-3 bg-white min-h-[140px]">
+            <p className="mb-2 text-[10px] text-gray-400">提示：点击代码可一键复制；选中文字后可开启防剧透。</p>
             <EditorContent editor={editor} onFocus={() => setShowMenu(false)} />
           </div>
 
           {buttons.length > 0 && (
-            <div className="p-2 border-t border-gray-100 bg-white grid gap-[1.5px]" style={{ gridTemplateColumns: `repeat(${gridConfig.cols}, 1fr)` }}>
-              {buttons.map(btn => (
-                <div 
-                  key={btn.id} 
-                  onClick={() => { setActiveBtnId(btn.id); setMenuView('editBtn'); setShowMenu(true); }}
-                  className={`py-1.5 px-1 rounded-md text-center text-xs font-bold border transition-all cursor-pointer ${activeBtnId === btn.id ? 'border-blue-500 bg-blue-50 text-blue-600' : 'bg-white border-gray-200 text-gray-500'}`}
-                >
-                  {btn.text || "未命名"}
+            <div className="p-2 border-t border-gray-100 bg-white space-y-[1.5px]">
+              {buttons.map((row, rowIndex) => (
+                <div key={`row-${rowIndex}`} className="grid gap-[1.5px]" style={{ gridTemplateColumns: `repeat(${Math.max(1, row.length)}, 1fr)` }}>
+                  {row.map((btn, colIndex) => {
+                    const typeMeta = {
+                      url: { icon: '🔗', label: '外链' },
+                      web_app: { icon: '📱', label: '小程序' },
+                      callback: { icon: '⚡', label: '交互' },
+                      switch: { icon: '📣', label: '转发' },
+                      pay: { icon: '💳', label: '支付' },
+                    }[btn?.type || 'url'] || { icon: '🔗', label: '外链' };
+                    return (
+                      <button
+                        key={btn.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveBtnId(btn.id);
+                          setEditingButtonPos({ rowIndex, colIndex });
+                          setBtnDraft({
+                            text: btn.text || '',
+                            value: btn.url || btn.callback_data || btn.switch_inline_query || btn.web_app?.url || '',
+                            btnType: btn.type || 'url',
+                          });
+                          setShowBtnModal(true);
+                        }}
+                        className={`py-2 px-1 rounded-md text-center text-[12px] font-semibold border transition-all cursor-pointer ${activeBtnId === btn.id ? 'border-blue-500 bg-blue-50 text-blue-600' : 'bg-[#F1F5F9] border-transparent text-[#2481cc]'}`}>
+                        <span className="mr-1">{typeMeta.icon}</span>{btn.text || '未命名'}
+                      </button>
+                    );
+                  })}
                 </div>
               ))}
             </div>
           )}
         </div>
       </div>
+
+      {showBtnModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-sm rounded-[18px] bg-white border border-gray-100 shadow-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-[0.25em]">按钮配置</p>
+                <h3 className="text-sm font-bold text-gray-800">编辑当前按钮</h3>
+              </div>
+              <button type="button" onClick={() => setShowBtnModal(false)} className="text-xs text-gray-400">关闭</button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-[11px] font-semibold text-gray-500">按钮文案</label>
+              <input value={btnDraft.text} onChange={(e) => setBtnDraft((prev) => ({ ...prev, text: e.target.value }))} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="输入按钮文案" />
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-[11px] font-semibold text-gray-500">按钮功能类型</label>
+              <select value={btnDraft.btnType} onChange={(e) => setBtnDraft((prev) => ({ ...prev, btnType: e.target.value, value: '' }))} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400">
+                <option value="url">url（普通外链）</option>
+                <option value="web_app">web_app（内嵌小程序）</option>
+                <option value="callback">callback（后台静默交互）</option>
+                <option value="switch">switch（一键转发分享）</option>
+                <option value="pay">pay（官方支付）</option>
+              </select>
+            </div>
+
+            {btnDraft.btnType !== 'pay' && (
+              <div className="space-y-2">
+                <label className="block text-[11px] font-semibold text-gray-500">核心内容</label>
+                <input value={btnDraft.value} onChange={(e) => setBtnDraft((prev) => ({ ...prev, value: e.target.value }))} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder={btnDraft.btnType === 'callback' ? '输入纯指令，如 like_click' : btnDraft.btnType === 'switch' ? '输入频道名或 Bot 名' : '输入网址或链接'} />
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setShowBtnModal(false)} className="px-3 py-2 rounded-xl text-xs font-semibold text-gray-500 bg-gray-100">取消</button>
+              <button type="button" onClick={saveButtonConfig} className="px-3 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 shadow-md">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="absolute bottom-0 left-0 right-0 bg-white border-t flex flex-col z-40 shadow-2xl transition-all duration-300">
         <div className="p-3 flex items-center gap-3 shrink-0 border-b border-gray-50">

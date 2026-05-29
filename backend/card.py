@@ -667,20 +667,73 @@ def publish_card_with_tg_cache_and_quota(data: dict):
         buttons_data = json.loads(buttons_raw or "[]")
     except Exception:
         buttons_data = []
+
+    inline_keyboard = []
     if isinstance(buttons_data, dict):
         buttons_data = [buttons_data]
 
-    inline_keyboard = []
-    for btn in buttons_data:
-        if not isinstance(btn, dict):
-            continue
-        btn_id = str(btn.get("id") or btn.get("button_id") or btn.get("text") or "btn")
-        btn_text = str(btn.get("text") or btn.get("label") or "点击")
-        original_url = str(btn.get("url") or btn.get("link") or "")
-        if not original_url:
-            continue
-        redirect_url = f"https://www.kongjing.online/api/click?card_id={quote_plus(card_id)}&button_id={quote_plus(btn_id)}&redirect={quote_plus(original_url)}"
-        inline_keyboard.append([{"text": btn_text, "url": redirect_url}])
+    official_button_mode = isinstance(buttons_data, list) and any(
+        isinstance(btn, dict) and (
+            'callback_data' in btn
+            or 'switch_inline_query' in btn
+            or btn.get('pay') is True
+            or isinstance(btn.get('web_app'), dict)
+            or btn.get('type') in ('url', 'web_app', 'callback', 'switch', 'pay')
+        )
+        for btn in buttons_data
+    )
+
+    if isinstance(buttons_data, list) and buttons_data and all(isinstance(row, list) for row in buttons_data):
+        for row in buttons_data:
+            line = []
+            for btn in row:
+                if not isinstance(btn, dict):
+                    continue
+                if "url" in btn and isinstance(btn.get("url"), str) and btn.get("url"):
+                    line.append({"text": str(btn.get("text") or "点击"), "url": str(btn["url"])})
+                elif isinstance(btn.get("web_app"), dict) and btn["web_app"].get("url"):
+                    line.append({"text": str(btn.get("text") or "打开"), "web_app": {"url": str(btn["web_app"]["url"])}})
+                elif "callback_data" in btn and btn.get("callback_data") is not None:
+                    line.append({"text": str(btn.get("text") or "点击"), "callback_data": str(btn["callback_data"])})
+                elif "switch_inline_query" in btn and btn.get("switch_inline_query") is not None:
+                    line.append({"text": str(btn.get("text") or "分享"), "switch_inline_query": str(btn["switch_inline_query"])})
+                elif btn.get("pay") is True:
+                    line.append({"text": str(btn.get("text") or "支付"), "pay": True})
+                else:
+                    btn_id = str(btn.get("id") or btn.get("button_id") or btn.get("text") or "btn")
+                    btn_text = str(btn.get("text") or btn.get("label") or "点击")
+                    original_url = str(btn.get("url") or btn.get("link") or "")
+                    if original_url:
+                        redirect_url = f"https://www.kongjing.online/api/click?card_id={quote_plus(card_id)}&button_id={quote_plus(btn_id)}&redirect={quote_plus(original_url)}"
+                        line.append({"text": btn_text, "url": redirect_url})
+            if line:
+                inline_keyboard.append(line)
+    else:
+        if official_button_mode:
+            for btn in buttons_data:
+                if not isinstance(btn, dict):
+                    continue
+                if isinstance(btn.get("web_app"), dict) and btn["web_app"].get("url"):
+                    inline_keyboard.append([{"text": str(btn.get("text") or "打开"), "web_app": {"url": str(btn["web_app"]["url"])}}])
+                elif "callback_data" in btn and btn.get("callback_data") is not None:
+                    inline_keyboard.append([{"text": str(btn.get("text") or "点击"), "callback_data": str(btn["callback_data"]) }])
+                elif "switch_inline_query" in btn and btn.get("switch_inline_query") is not None:
+                    inline_keyboard.append([{"text": str(btn.get("text") or "分享"), "switch_inline_query": str(btn["switch_inline_query"]) }])
+                elif btn.get("pay") is True:
+                    inline_keyboard.append([{"text": str(btn.get("text") or "支付"), "pay": True }])
+                elif isinstance(btn.get("url"), str) and btn.get("url"):
+                    inline_keyboard.append([{"text": str(btn.get("text") or "点击"), "url": str(btn["url"]) }])
+        else:
+            for btn in buttons_data:
+                if not isinstance(btn, dict):
+                    continue
+                btn_id = str(btn.get("id") or btn.get("button_id") or btn.get("text") or "btn")
+                btn_text = str(btn.get("text") or btn.get("label") or "点击")
+                original_url = str(btn.get("url") or btn.get("link") or "")
+                if not original_url:
+                    continue
+                redirect_url = f"https://www.kongjing.online/api/click?card_id={quote_plus(card_id)}&button_id={quote_plus(btn_id)}&redirect={quote_plus(original_url)}"
+                inline_keyboard.append([{"text": btn_text, "url": redirect_url}])
 
     reply_markup = {"inline_keyboard": inline_keyboard} if inline_keyboard else None
     clean_content = re.sub(r'<p\s*>', '', content or '')
