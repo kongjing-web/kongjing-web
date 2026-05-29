@@ -697,7 +697,16 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [menuView, setMenuView] = useState('main'); 
   const [showBtnModal, setShowBtnModal] = useState(false);
   const [editingButtonPos, setEditingButtonPos] = useState(null);
+  const [activeBtnKey, setActiveBtnKey] = useState(null);
   const [btnDraft, setBtnDraft] = useState({ text: '', value: '', btnType: 'url' });
+
+  const detectButtonType = (btn = {}) => {
+    if (btn?.web_app) return 'web_app';
+    if (btn?.callback_data !== undefined) return 'callback';
+    if (btn?.switch_inline_query !== undefined) return 'switch';
+    if (btn?.pay === true) return 'pay';
+    return 'url';
+  };
 
   const normalizeButtons = (rawButtons) => {
     const parseValue = (value) => {
@@ -714,9 +723,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     const raw = parseValue(rawButtons);
     if (Array.isArray(raw) && raw.length > 0 && raw.every((item) => Array.isArray(item))) {
       return raw.map((row) => row.map((btn) => ({
-        id: btn?.id || `${Date.now()}-${Math.random()}`,
         text: btn?.text || btn?.label || '按钮',
-        type: btn?.type || (btn?.url ? 'url' : btn?.web_app ? 'web_app' : btn?.callback_data ? 'callback' : btn?.switch_inline_query ? 'switch' : btn?.pay ? 'pay' : 'url'),
         url: btn?.url || '',
         web_app: btn?.web_app || null,
         callback_data: btn?.callback_data || '',
@@ -728,9 +735,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     const list = Array.isArray(raw) ? raw : [];
     if (list.length === 0) return [];
     return [list.map((btn) => ({
-      id: btn?.id || `${Date.now()}-${Math.random()}`,
       text: btn?.text || btn?.label || '按钮',
-      type: btn?.type || (btn?.url ? 'url' : btn?.web_app ? 'web_app' : btn?.callback_data ? 'callback' : btn?.switch_inline_query ? 'switch' : btn?.pay ? 'pay' : 'url'),
       url: btn?.url || '',
       web_app: btn?.web_app || null,
       callback_data: btn?.callback_data || '',
@@ -846,9 +851,17 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const triggerPublish = () => {
     if (!editor) return;
 
-    const normalizedButtons = Array.isArray(buttons) && buttons.some((row) => Array.isArray(row))
-      ? buttons
-      : (Array.isArray(buttons) ? [buttons] : []);
+    const latestButtons = Array.isArray(buttons) && buttons.some((row) => Array.isArray(row))
+      ? buttons.map((row) => row.map((btn) => {
+          const officialBtn = { text: btn?.text || '按钮' };
+          if (btn?.url) officialBtn.url = btn.url;
+          if (btn?.web_app) officialBtn.web_app = btn.web_app;
+          if (btn?.callback_data) officialBtn.callback_data = btn.callback_data;
+          if (btn?.switch_inline_query) officialBtn.switch_inline_query = btn.switch_inline_query;
+          if (btn?.pay) officialBtn.pay = true;
+          return officialBtn;
+        }))
+      : (Array.isArray(buttons) ? [buttons.map((btn) => ({ text: btn?.text || '按钮', url: btn?.url || '' }))] : []);
 
     // 改为判断 uploading 状态，而不是只针对图片
     if (mediaFile?.uploading) {
@@ -862,7 +875,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       title: pureText.length > 0 ? pureText : "未命名 Telegram 原生卡片",
       status: cardToEdit ? cardToEdit.status : "草稿",
       content: editor.getHTML(),
-      buttons: normalizedButtons,
+      buttons: latestButtons,
       img: mediaFile?.remoteUrl || "",  // 禁止保存 blob URL，只保存公网地址或空字符串
       media_type: mediaFile?.type || 'photo',  // 同时保存媒体类型
       analytics: cardToEdit ? cardToEdit.analytics : { views: 0, shares: 0, likes: 0, clicks: 0 }
@@ -908,7 +921,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       const row = [];
       for (let colIndex = 0; colIndex < cols; colIndex += 1) {
         const btnIndex = rowIndex * cols + colIndex;
-        row.push({ id: Date.now() + btnIndex, text: `按钮 ${btnIndex + 1}`, type: 'url', url: 'https://t.me' });
+        row.push({ text: `按钮 ${btnIndex + 1}`, url: 'https://t.me' });
       }
       matrix.push(row);
     }
@@ -929,11 +942,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       rawValue = `@${rawValue}`;
     }
 
-    const nextButton = {
-      id: buttons[rowIndex]?.[colIndex]?.id || `${Date.now()}-${rowIndex}-${colIndex}`,
-      text: rawText || '按钮',
-      type: btnDraft.btnType,
-    };
+    const nextButton = { text: rawText || '按钮' };
 
     if (btnDraft.btnType === 'url') nextButton.url = rawValue;
     if (btnDraft.btnType === 'web_app') nextButton.web_app = { url: rawValue };
@@ -949,8 +958,8 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const menuItems = [
     { icon: "B", label: "加粗", active: 'bold' }, { icon: "I", label: "斜体", active: 'italic' },
     { icon: "U", label: "下划线", active: 'underline' }, { icon: "S", label: "删除线", active: 'strike' },
-    { icon: "�", label: "一键复制" }, { icon: "🫥", label: "防剧透" },
-    { icon: "�😀", label: "表情" }, { icon: "🔗", label: "内嵌链接", active: 'link' },
+    { icon: "📋", label: "一键复制" }, { icon: "🫥", label: "防剧透" },
+    { icon: "😀", label: "表情" }, { icon: "🔗", label: "内嵌链接", active: 'link' },
     { icon: "🔘", label: "按钮" }, { icon: "↗", label: "外部链接" },
     { icon: "—", label: "引用", active: 'blockquote' }, { icon: "扫", label: "清除格式" },
     { icon: "↩", label: "撤销" }, { icon: "↪", label: "重做" }
@@ -993,28 +1002,29 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
               {buttons.map((row, rowIndex) => (
                 <div key={`row-${rowIndex}`} className="grid gap-[1.5px]" style={{ gridTemplateColumns: `repeat(${Math.max(1, row.length)}, 1fr)` }}>
                   {row.map((btn, colIndex) => {
+                    const btnType = detectButtonType(btn);
                     const typeMeta = {
                       url: { icon: '🔗', label: '外链' },
                       web_app: { icon: '📱', label: '小程序' },
                       callback: { icon: '⚡', label: '交互' },
                       switch: { icon: '📣', label: '转发' },
                       pay: { icon: '💳', label: '支付' },
-                    }[btn?.type || 'url'] || { icon: '🔗', label: '外链' };
+                    }[btnType] || { icon: '🔗', label: '外链' };
                     return (
                       <button
-                        key={btn.id}
+                        key={`${rowIndex}-${colIndex}`}
                         type="button"
                         onClick={() => {
-                          setActiveBtnId(btn.id);
+                          setActiveBtnKey(`${rowIndex}-${colIndex}`);
                           setEditingButtonPos({ rowIndex, colIndex });
                           setBtnDraft({
                             text: btn.text || '',
                             value: btn.url || btn.callback_data || btn.switch_inline_query || btn.web_app?.url || '',
-                            btnType: btn.type || 'url',
+                            btnType: btnType,
                           });
                           setShowBtnModal(true);
                         }}
-                        className={`py-2 px-1 rounded-md text-center text-[12px] font-semibold border transition-all cursor-pointer ${activeBtnId === btn.id ? 'border-blue-500 bg-blue-50 text-blue-600' : 'bg-[#F1F5F9] border-transparent text-[#2481cc]'}`}>
+                        className={`py-2 px-1 rounded-md text-center text-[12px] font-semibold border transition-all cursor-pointer ${activeBtnKey === `${rowIndex}-${colIndex}` ? 'border-blue-500 bg-blue-50 text-blue-600' : 'bg-[#F1F5F9] border-transparent text-[#2481cc]'}`}>
                         <span className="mr-1">{typeMeta.icon}</span>{btn.text || '未命名'}
                       </button>
                     );
