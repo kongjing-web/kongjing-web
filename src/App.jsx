@@ -302,6 +302,8 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
   const wxUsername = currentUser?.username || "匿名用户";
   const wxRole = currentUser ? (currentUser.role === 'superuser' ? '超级管理员' : '普通用户') : '未登录';
   const vipStatus = currentUser?.vip_until && Number(currentUser.vip_until) > Math.floor(Date.now() / 1000) ? 'VIP 有效' : (currentUser ? '普通用户' : '未登录');
+  const displayName = currentUser?.is_anonymous || !currentUser ? '匿名用户' : (currentUser?.tg_id ? `ID: ${currentUser.tg_id}` : (currentUser.username || '匿名用户'));
+  const botLabel = (!currentUser || currentUser?.is_anonymous || !currentUser?.bot_username) ? '当前尚未绑定专属bot' : `已绑定: @${currentUser.bot_username}`;
 
   const toggleCardActions = (id) => {
     setActiveCardId(activeCardId === id ? null : id);
@@ -376,9 +378,9 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
             </div>
             <div className="flex flex-col items-start">
               <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
-                {wxUsername} <FaChevronDown size={8} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
+                {displayName} <FaChevronDown size={8} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
               </span>
-              <span className="text-[9px] text-green-500 font-medium">{wxRole} · {vipStatus}</span>
+              <span className="text-[9px] text-green-500 font-medium">{botLabel}</span>
             </div>
           </div>
 
@@ -404,28 +406,6 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
           )}
         </div>
         <div className="text-right"><span className="text-[10px] bg-slate-100 font-bold text-slate-500 px-2 py-1 rounded-md">Console v1.2</span></div>
-      </div>
-      <div className="bg-slate-50 px-4 pb-4">
-        <div className="bg-gradient-to-r from-slate-900 via-slate-700 to-slate-950 rounded-3xl p-4 shadow-lg text-white border border-slate-800/20">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-300">当前登录用户</p>
-              <h2 className="text-lg font-bold">{wxUsername || '匿名用户'}</h2>
-              <p className="text-sm text-slate-200">{wxRole} · {vipStatus}</p>
-            </div>
-            <div className="text-right text-xs text-slate-300">
-              <p>Telegram ID</p>
-              <p className="font-semibold text-white truncate max-w-[120px]">{currentUser?.id || '未登录'}</p>
-            </div>
-          </div>
-          {currentUser?.bot_username ? (
-            <div className="mt-4 rounded-2xl bg-white/10 p-3 text-[12px] text-slate-100">
-              专属 Bot：@{currentUser.bot_username}
-            </div>
-          ) : (
-            <div className="mt-4 rounded-2xl bg-white/10 p-3 text-[12px] text-slate-200">当前尚未绑定专属 Bot</div>
-          )}
-        </div>
       </div>
 
       <div className="p-4 pb-12">

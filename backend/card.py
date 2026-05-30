@@ -23,6 +23,8 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from PIL import Image, ImageSequence
 import psycopg2
+from telegram_formatter import sanitize_for_telegram, truncate_caption, smart_clean_inline_keyboard
+
 
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心")
 
@@ -559,52 +561,30 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
     target_photo = data.img if data.img else (data.image if data.image else "")
     db_img = str(target_photo).strip()
 
-    # 身份提取完全交给 get_current_tg_user，绝不相信前端传参
+    # 身份提取完全交给 get_current_tg_user
     incoming_user_id = str(current_user.get("id")).strip()
+    print("\n====== 保存调试 ======")
+    print("title =", repr(data.title))
+    print("content =", repr(data.content))
+    print("=====================\n")
     if not incoming_user_id:
         raise HTTPException(status_code=400, detail="卡片保存失败：未能提取到有效的 Telegram 用户ID")
 
+    # ==================== 【彻底简化：拥抱 type/value 纯净存储】 ====================
     db_buttons = data.buttons
     if isinstance(db_buttons, str):
         try:
-            parsed_buttons = json.loads(db_buttons)
+            # 如果前端传过来的是未解开的字符串，解成 Python 列表/字典
+            db_buttons = json.loads(db_buttons)
         except Exception:
-            parsed_buttons = db_buttons
-        db_buttons = parsed_buttons
+            pass
 
-    if isinstance(db_buttons, dict):
-        db_buttons = [db_buttons]
-
-    if isinstance(db_buttons, list):
-        normalized_buttons = []
-        for row in db_buttons:
-            if isinstance(row, list):
-                normalized_buttons.append([
-                    {
-                        "text": str(btn.get("text") or "按钮"),
-                        **({"url": str(btn["url"])} if isinstance(btn.get("url"), str) and btn.get("url") else {}),
-                        **({"web_app": btn["web_app"]} if isinstance(btn.get("web_app"), dict) and btn["web_app"].get("url") else {}),
-                        **({"callback_data": str(btn["callback_data"])} if btn.get("callback_data") is not None else {}),
-                        **({"switch_inline_query": str(btn["switch_inline_query"])} if btn.get("switch_inline_query") is not None else {}),
-                        **({"pay": True} if btn.get("pay") is True else {}),
-                    }
-                    for btn in row
-                    if isinstance(btn, dict)
-                ])
-            elif isinstance(row, dict):
-                normalized_buttons.append([
-                    {
-                        "text": str(row.get("text") or "按钮"),
-                        **({"url": str(row["url"])} if isinstance(row.get("url"), str) and row.get("url") else {}),
-                        **({"web_app": row["web_app"]} if isinstance(row.get("web_app"), dict) and row["web_app"].get("url") else {}),
-                        **({"callback_data": str(row["callback_data"])} if row.get("callback_data") is not None else {}),
-                        **({"switch_inline_query": str(row["switch_inline_query"])} if row.get("switch_inline_query") is not None else {}),
-                        **({"pay": True} if row.get("pay") is True else {}),
-                    }
-                ])
-        db_buttons = json.dumps(normalized_buttons if normalized_buttons else (db_buttons if isinstance(db_buttons, list) else []), ensure_ascii=False)
+    # 确保最终入库前包裹成标准 JSON 文本，原封不动保留前端的 type 和 value 结构
+    if isinstance(db_buttons, (list, dict)):
+        db_buttons_str = json.dumps(db_buttons, ensure_ascii=False)
     else:
-        db_buttons = str(db_buttons) if db_buttons is not None else "[]"
+        db_buttons_str = str(db_buttons) if db_buttons is not None else "[]"
+    # ==============================================================================
 
     media_type = str(data.media_type).strip() if data.media_type else 'photo'
     if media_type not in ['photo', 'video', 'gif']:
@@ -623,7 +603,7 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                         SET title = %s, content = %s, img = %s, buttons = %s, media_type = %s, user_id = %s
                         WHERE id = %s
                         """,
-                        (data.title, data.content, db_img, db_buttons, media_type, incoming_user_id, card_id),
+                        (data.title, data.content, db_img, db_buttons_str, media_type, incoming_user_id, card_id),
                     )
                 else:
                     cursor.execute(
@@ -631,7 +611,7 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                         INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (card_id, data.title, data.content, db_img, db_buttons, media_type, "草稿", incoming_user_id),
+                        (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id),
                     )
             else:
                 card_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
@@ -640,55 +620,12 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                     INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (card_id, data.title, data.content, db_img, db_buttons, media_type, "草稿", incoming_user_id),
+                    (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id),
                 )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"数据库写入异常: {str(e)}")
 
     return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
-
-def _clean_inline_keyboard(raw_buttons: Any) -> List[List[dict]]:
-    """过滤为 Telegram 官方 inline_keyboard 结构，只保留官方字段。"""
-    if isinstance(raw_buttons, dict):
-        raw_buttons = [raw_buttons]
-
-    if not isinstance(raw_buttons, list):
-        return []
-
-    if raw_buttons and all(isinstance(row, list) for row in raw_buttons):
-        matrix = raw_buttons
-    else:
-        matrix = [raw_buttons]
-
-    cleaned_rows = []
-    for row in matrix:
-        if not isinstance(row, list):
-            row = [row]
-
-        cleaned_row = []
-        for btn in row:
-            if not isinstance(btn, dict):
-                continue
-
-            official_btn = {"text": str(btn.get("text") or btn.get("label") or "按钮")}
-            if isinstance(btn.get("url"), str) and btn.get("url"):
-                official_btn["url"] = btn["url"]
-            if isinstance(btn.get("web_app"), dict) and isinstance(btn["web_app"].get("url"), str) and btn["web_app"]["url"]:
-                official_btn["web_app"] = {"url": btn["web_app"]["url"]}
-            if btn.get("callback_data") is not None:
-                official_btn["callback_data"] = str(btn["callback_data"])
-            if btn.get("switch_inline_query") is not None:
-                official_btn["switch_inline_query"] = str(btn["switch_inline_query"])
-            if btn.get("pay") is True:
-                official_btn["pay"] = True
-
-            if len(official_btn) > 1:
-                cleaned_row.append(official_btn)
-
-        if cleaned_row:
-            cleaned_rows.append(cleaned_row)
-
-    return cleaned_rows
 
 
 # 3. 发布卡片接口
@@ -705,10 +642,20 @@ def publish_card_with_tg_cache_and_quota(data: dict):
                 (card_id,),
             )
             row = cursor.fetchone()
+           
             if not row:
                 raise HTTPException(status_code=404, detail="卡片未找到")
 
             title, content, img, buttons_raw, card_user_id, media_type = row
+            print("\n========== 发布调试 ==========")
+
+            print("TITLE:")
+            print(repr(title))
+
+            print("\nCONTENT:")
+            print(repr(content))
+
+            print("\n=============================\n")
             if not card_user_id or str(card_user_id).strip() == "" or str(card_user_id).lower() == "none":
                 raise HTTPException(status_code=400, detail="发布失败：该卡片在数据库中未绑定任何有效用户")
 
@@ -748,11 +695,21 @@ def publish_card_with_tg_cache_and_quota(data: dict):
     except Exception:
         buttons_data = []
 
-    clean_keyboard = _clean_inline_keyboard(buttons_data)
+    # ======= 【更新：调用全新智能按钮清洗器】 =======
+    clean_keyboard = smart_clean_inline_keyboard(buttons_data, card_id)
     reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
-    clean_content = re.sub(r'<p\s*>', '', content or '')
-    clean_content = re.sub(r'</p\s*>', '\n', clean_content)
-    caption_text = f"<b>{title}</b>\n\n{clean_content}"
+
+   # 修改后：直接拿富文本内容，不拼接任何多余标题
+    raw_html_content = (content or "").strip()
+        
+    # 调用升级版的工具函数洗白
+    clean_html_content = sanitize_for_telegram(raw_html_content)
+    
+    # 动态控制字数
+    has_media = img and str(img).strip() != ""
+    limit_length = 1024 if has_media else 4096
+    caption_text = truncate_caption(clean_html_content, limit=limit_length)
+    # ====================================================================
 
     with get_db_connection() as (_, cursor):
         cursor.execute(
@@ -768,44 +725,26 @@ def publish_card_with_tg_cache_and_quota(data: dict):
     try:
         if tg_file_id:
             if media_type == 'video':
-                video_value = tg_file_id if tg_file_id else img
-                payload = {"chat_id": chat_id, "video": video_value, "caption": caption_text, "parse_mode": "HTML"}
-                if reply_markup:
-                    payload["reply_markup"] = reply_markup
-                res = requests.post(f"{telegram_api_base}/sendVideo", json=payload, timeout=15)
+                payload = {"chat_id": chat_id, "video": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
             elif media_type == 'gif':
-                gif_value = tg_file_id if tg_file_id else img
-                payload = {"chat_id": chat_id, "animation": gif_value, "caption": caption_text, "parse_mode": "HTML"}
-                if reply_markup:
-                    payload["reply_markup"] = reply_markup
-                res = requests.post(f"{telegram_api_base}/sendAnimation", json=payload, timeout=15)
+                payload = {"chat_id": chat_id, "animation": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
             else:
-                photo_value = tg_file_id if tg_file_id else img
-                payload = {"chat_id": chat_id, "photo": photo_value, "caption": caption_text, "parse_mode": "HTML"}
-                if reply_markup:
-                    payload["reply_markup"] = reply_markup
-                res = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
+                payload = {"chat_id": chat_id, "photo": tg_file_id, "caption": caption_text, "parse_mode": "HTML"}
+            if reply_markup:
+                payload["reply_markup"] = reply_markup
+            res = requests.post(f"{telegram_api_base}/send" + ("Video" if media_type == 'video' else "Animation" if media_type == 'gif' else "Photo"), json=payload, timeout=15)
             response_data = res
         else:
             if img and str(img).strip() != "":
                 if media_type == 'video':
-                    video_value = tg_file_id if tg_file_id else img
-                    payload = {"chat_id": chat_id, "video": video_value, "caption": caption_text, "parse_mode": "HTML"}
-                    if reply_markup:
-                        payload["reply_markup"] = reply_markup
-                    res = requests.post(f"{telegram_api_base}/sendVideo", json=payload, timeout=15)
+                    payload = {"chat_id": chat_id, "video": img, "caption": caption_text, "parse_mode": "HTML"}
                 elif media_type == 'gif':
-                    gif_value = tg_file_id if tg_file_id else img
-                    payload = {"chat_id": chat_id, "animation": gif_value, "caption": caption_text, "parse_mode": "HTML"}
-                    if reply_markup:
-                        payload["reply_markup"] = reply_markup
-                    res = requests.post(f"{telegram_api_base}/sendAnimation", json=payload, timeout=15)
+                    payload = {"chat_id": chat_id, "animation": img, "caption": caption_text, "parse_mode": "HTML"}
                 else:
-                    photo_value = tg_file_id if tg_file_id else img
-                    payload = {"chat_id": chat_id, "photo": photo_value, "caption": caption_text, "parse_mode": "HTML"}
-                    if reply_markup:
-                        payload["reply_markup"] = reply_markup
-                    res = requests.post(f"{telegram_api_base}/sendPhoto", json=payload, timeout=15)
+                    payload = {"chat_id": chat_id, "photo": img, "caption": caption_text, "parse_mode": "HTML"}
+                if reply_markup:
+                    payload["reply_markup"] = reply_markup
+                res = requests.post(f"{telegram_api_base}/send" + ("Video" if media_type == 'video' else "Animation" if media_type == 'gif' else "Photo"), json=payload, timeout=15)
             else:
                 payload = {"chat_id": chat_id, "text": caption_text, "parse_mode": "HTML"}
                 if reply_markup:
@@ -834,13 +773,12 @@ def publish_card_with_tg_cache_and_quota(data: dict):
                     print(f"[警告] 提取或写入 tg_file_id 失败: {str(cache_err)}")
 
         if not response_data.ok:
-            print("[Telegram Publish] status:", response_data.status_code)
-            print("[Telegram Publish] body:", response_data.text)
-            raise HTTPException(status_code=400, detail=f"Telegram推送失败。请确认您在TG中开启并/start了机器人。错误原因: {response_data.text}")
+            raise HTTPException(status_code=400, detail=f"Telegram推送失败。错误原因: {response_data.text}")
     except requests.exceptions.RequestException as req_err:
-        raise HTTPException(status_code=502, detail=f"连接 Telegram 官方服务超时，请重试: {str(req_err)}")
+        raise HTTPException(status_code=502, detail=f"连接 Telegram 服务超时: {str(req_err)}")
 
     with get_db_connection() as (_, cursor):
+        # 注意：这里我们只更新状态，绝对不会把带有标题拼装后的 caption_text 更新回 content 字段！
         cursor.execute("UPDATE cards SET status = %s WHERE id = %s", ("已发布", card_id))
         if role != 'superuser' and not (vip_until and int(vip_until) > now_ts):
             cursor.execute(
@@ -849,7 +787,6 @@ def publish_card_with_tg_cache_and_quota(data: dict):
             )
 
     return {"code": 200, "status": "success", "message": "卡片发布成功！", "is_cached": tg_file_id is not None}
-
 # 4. 用户登录接口（【严格保留原有变量对齐方案】）
 @app.post("/user/login")
 def user_login(current_user: dict = Depends(get_current_tg_user)):
