@@ -938,18 +938,27 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     const rawText = (btnDraft.text || '').trim();
     let rawValue = (btnDraft.value || '').trim();
 
-     if (btnDraft.btnType === 'switch' && rawValue && !rawValue.startsWith('@')) {
+    // 如果是 inline 切换查询类型，自动规范化加上 @ 符号
+    if (btnDraft.btnType === 'switch' && rawValue && !rawValue.startsWith('@')) {
       rawValue = `@${rawValue}`;
     }
-    const nextButton = { text: rawText || '按钮' };
 
-    if (btnDraft.btnType === 'url') nextButton.url = rawValue;
-    if (btnDraft.btnType === 'web_app') nextButton.web_app = { url: rawValue };
-    if (btnDraft.btnType === 'callback') nextButton.callback_data = rawValue;
-    if (btnDraft.btnType === 'switch') nextButton.switch_inline_query = rawValue;
-    if (btnDraft.btnType === 'pay') nextButton.pay = true;
+    // 🚀【核心整编】前端只生成纯净的 text、type、value，让后端发布器和编译器去读
+    const nextButton = {
+      text: rawText || '按钮',
+      type: btnDraft.btnType || 'url',
+      value: rawValue
+    };
 
-    setButtons((prev) => prev.map((row, r) => r === rowIndex ? row.map((btn, c) => c === colIndex ? nextButton : btn) : row));
+    // 更新按钮矩阵状态
+    setButtons((prev) =>
+      prev.map((row, r) =>
+        r === rowIndex
+          ? row.map((btn, c) => (c === colIndex ? nextButton : btn))
+          : row
+      )
+    );
+
     setShowBtnModal(false);
     setEditingButtonPos(null);
   };
