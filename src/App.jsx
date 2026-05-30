@@ -299,11 +299,25 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
 
-  const wxUsername = currentUser?.username || "匿名用户";
-  const wxRole = currentUser ? (currentUser.role === 'superuser' ? '超级管理员' : '普通用户') : '未登录';
-  const vipStatus = currentUser?.vip_until && Number(currentUser.vip_until) > Math.floor(Date.now() / 1000) ? 'VIP 有效' : (currentUser ? '普通用户' : '未登录');
-  const displayName = currentUser?.is_anonymous || !currentUser ? '匿名用户' : (currentUser?.tg_id ? `ID: ${currentUser.tg_id}` : (currentUser.username || '匿名用户'));
-  const botLabel = (!currentUser || currentUser?.is_anonymous || !currentUser?.bot_username) ? '当前尚未绑定专属bot' : `已绑定: @${currentUser.bot_username}`;
+  // 保留原有 currentUser 状态不变，提供兼容的 `user` 别名以满足旧版逻辑引用
+  const user = currentUser || null;
+  const wxUsername = user?.username || "匿名用户";
+  const wxRole = user ? (user.role === 'superuser' ? '超级管理员' : '普通用户') : '未登录';
+  const vipStatus = user?.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000) ? 'VIP 有效' : (user ? '普通用户' : '未登录');
+
+  // 优先读取 user?.tg_id，其次回退到 Telegram WebApp initDataUnsafe 中的 id
+  const telegramInitId = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initDataUnsafe?.user?.id : null;
+  const resolvedId = (user && user.tg_id) ? user.tg_id : (telegramInitId ? telegramInitId : null);
+  const isAnonymous = (user && user.is_anonymous === true) || !resolvedId;
+  const displayName = isAnonymous ? '匿名用户' : `ID: ${resolvedId}`;
+
+  // VIP 标签：只有非匿名用户时展示
+  const vipTag = !isAnonymous ? (user?.is_vip ? 'VIP' : '普通用户') : null;
+
+  // 专属 Bot 状态（保持原变量名判断 user?.has_bot / user?.bot_username）
+  const botStatus = isAnonymous
+    ? { text: '正在等待 Telegram 授权登录...', className: 'text-gray-400' }
+    : (user?.has_bot ? { text: `● 已绑定: @${user?.bot_username}`, className: 'text-emerald-500' } : { text: '○ 当前尚未绑定专属bot', className: 'text-amber-500' });
 
   const toggleCardActions = (id) => {
     setActiveCardId(activeCardId === id ? null : id);
@@ -377,10 +391,14 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
               {wxUsername.charAt(0)}
             </div>
             <div className="flex flex-col items-start">
-              <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
-                {displayName} <FaChevronDown size={8} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
+              <span className="text-xs font-bold text-gray-800 flex items-center gap-2">
+                <span className="truncate max-w-[140px]">{displayName}</span>
+                {vipTag && (
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${user?.is_vip ? 'bg-amber-400 text-white' : 'bg-gray-200 text-gray-700'}`}>{vipTag}</span>
+                )}
+                <FaChevronDown size={8} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
               </span>
-              <span className="text-[9px] text-green-500 font-medium">{botLabel}</span>
+              <span className={`text-[11px] font-medium ${botStatus.className}`}>{botStatus.text}</span>
             </div>
           </div>
 
@@ -407,6 +425,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
         </div>
         <div className="text-right"><span className="text-[10px] bg-slate-100 font-bold text-slate-500 px-2 py-1 rounded-md">Console v1.2</span></div>
       </div>
+      {/* 注：已将下方冗余的用户信息卡片移除，相关显示已整合至顶部 Header */}
 
       <div className="p-4 pb-12">
         <p className="text-[11px] text-gray-400 mt-2 mb-3 font-bold uppercase tracking-widest">选择卡片类型</p >
