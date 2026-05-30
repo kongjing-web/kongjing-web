@@ -938,13 +938,9 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     const rawText = (btnDraft.text || '').trim();
     let rawValue = (btnDraft.value || '').trim();
 
-    if (btnDraft.btnType === 'url' || btnDraft.btnType === 'web_app') {
-      if (!/^https?:\/\//i.test(rawValue)) rawValue = `https://${rawValue}`;
-    }
-    if (btnDraft.btnType === 'switch' && rawValue && !rawValue.startsWith('@')) {
+     if (btnDraft.btnType === 'switch' && rawValue && !rawValue.startsWith('@')) {
       rawValue = `@${rawValue}`;
     }
-
     const nextButton = { text: rawText || '按钮' };
 
     if (btnDraft.btnType === 'url') nextButton.url = rawValue;
