@@ -870,10 +870,13 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     }
 
     const pureText = editor.getText().trim();
+    const shortTitle = pureText.length > 0 
+     ? (pureText.slice(0, 15) + (pureText.length > 15 ? "..." : "")) 
+     : "未命名原生卡片";
     onPublish({
       id: cardToEdit ? cardToEdit.id : null,
-      title: pureText.length > 0 ? pureText : "未命名 Telegram 原生卡片",
-      status: cardToEdit ? cardToEdit.status : "草稿",
+      title: shortTitle, 
+      status: cardToEdit ? cardToEdit.status : "未发布",
       content: editor.getHTML(),
       buttons: latestButtons,
       img: mediaFile?.remoteUrl || "",  // 禁止保存 blob URL，只保存公网地址或空字符串
