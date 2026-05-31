@@ -501,49 +501,57 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   const [payUrl, setPayUrl] = useState(null);
 
   const handleCreateInvoice = async () => {
-    if (!currentUser?.id) {
-      alert('请先完成 Telegram 登录');
-      return;
+  if (!currentUser?.id) {
+    alert('请先完成 Telegram 登录数据授权');
+    return;
+  }
+  setLoading(true);
+  setError(null);
+  try {
+    const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
+      method: 'POST',
+      headers: getAuthHeaders('application/json'),
+      body: JSON.stringify({ telegram_id: currentUser.id })
+    });
+    
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || '创建发票失败');
     }
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
-        method: 'POST',
-        headers: getAuthHeaders('application/json'),
-        body: JSON.stringify({ telegram_id: currentUser.id })
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || '创建发票失败');
+    
+    const data = await response.json();
+    // 统一读取后端标准的 pay_url 字段
+    const openUrl = data.pay_url || data.url; 
+    
+    if (openUrl) {
+      if (window.Telegram?.WebApp?.openLink) {
+        // 使用 Telegram 官方特权方法无缝拉起收银台
+        window.Telegram.WebApp.openLink(openUrl);
+      } else {
+        window.open(openUrl, '_blank');
       }
-      const data = await response.json();
-      const openUrl = data.pay_url || data.payUrl || data.url || data.payment_url;
-      setPayUrl(openUrl);
-      if (openUrl) {
-        if (window.Telegram?.WebApp?.openLink) {
-          window.Telegram.WebApp.openLink(openUrl);
-        } else {
-          window.open(openUrl, '_blank');
+    } else {
+      alert("未获取到有效的支付跳转链接，请检查后端 Crypto 凭证。");
+    }
+    
+    // 保持前端现有的每 5 秒自动同步刷新用户 VIP 状态的轮询逻辑
+    if (onRefreshUser) {
+      let attempts = 0;
+      const intervalId = setInterval(async () => {
+        attempts += 1;
+        await onRefreshUser();
+        if (attempts >= 15) { // 提高到15次轮询
+          clearInterval(intervalId);
         }
-      }
-      if (onRefreshUser) {
-        let attempts = 0;
-        const intervalId = setInterval(async () => {
-          attempts += 1;
-          await onRefreshUser();
-          if (attempts >= 12) {
-            clearInterval(intervalId);
-          }
-        }, 5000);
-      }
-    } catch (err) {
-      console.error('创建发票失败:', err);
-      setError(err.message || '创建支付链接失败');
-    } finally {
-      setLoading(false);
+      }, 5000);
     }
-  };
+  } catch (err) {
+    console.error('创建发票请求失败:', err);
+    alert(err.message || '网络连接异常');
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
