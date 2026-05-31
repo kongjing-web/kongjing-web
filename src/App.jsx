@@ -850,18 +850,6 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const triggerPublish = () => {
     if (!editor) return;
 
-    const latestButtons = Array.isArray(buttons) && buttons.some((row) => Array.isArray(row))
-      ? buttons.map((row) => row.map((btn) => {
-          const officialBtn = { text: btn?.text || '按钮' };
-          if (btn?.url) officialBtn.url = btn.url;
-          if (btn?.web_app) officialBtn.web_app = btn.web_app;
-          if (btn?.callback_data) officialBtn.callback_data = btn.callback_data;
-          if (btn?.switch_inline_query) officialBtn.switch_inline_query = btn.switch_inline_query;
-          if (btn?.pay) officialBtn.pay = true;
-          return officialBtn;
-        }))
-      : (Array.isArray(buttons) ? [buttons.map((btn) => ({ text: btn?.text || '按钮', url: btn?.url || '' }))] : []);
-
     // 改为判断 uploading 状态，而不是只针对图片
     if (mediaFile?.uploading) {
       alert('媒体文件正在上传，请稍后再保存');
@@ -872,12 +860,15 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     const shortTitle = pureText.length > 0 
      ? (pureText.slice(0, 15) + (pureText.length > 15 ? "..." : "")) 
      : "未命名原生卡片";
+
+    // 🟢 【终极修正】直接把原汁原味的、包含 text/type/value 的纯净矩阵传过去
+    // 不要在前端自作聪明地做任何转型过滤，全部交给后端的强力编译器
     onPublish({
       id: cardToEdit ? cardToEdit.id : null,
       title: shortTitle, 
       status: cardToEdit ? cardToEdit.status : "未发布",
       content: editor.getHTML(),
-      buttons: latestButtons,
+      buttons: Array.isArray(buttons) ? buttons : [], // 🟢 保持最纯净的矩阵形态原样上报
       img: mediaFile?.remoteUrl || "",  // 禁止保存 blob URL，只保存公网地址或空字符串
       media_type: mediaFile?.type || 'photo',  // 同时保存媒体类型
       analytics: cardToEdit ? cardToEdit.analytics : { views: 0, shares: 0, likes: 0, clicks: 0 }
