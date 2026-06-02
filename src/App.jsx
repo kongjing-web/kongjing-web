@@ -528,7 +528,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
     }
     
     const data = await response.json();
-    const openUrl = data.pay_url || data.url; 
+    const openUrl = data.pay_url || data.url || data.payment_url; 
     
     if (openUrl) {
       if (window.Telegram?.WebApp?.openTelegramLink) {
