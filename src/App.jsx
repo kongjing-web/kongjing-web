@@ -501,17 +501,21 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   const [payUrl, setPayUrl] = useState(null);
 
   const handleCreateInvoice = async () => {
-  if (!currentUser?.id) {
-    alert('请先完成 Telegram 登录数据授权');
+  // 1. 安全前置拦截：确保是在 TG 环境中打开
+  const initData = window.Telegram?.WebApp?.initData;
+  if (!initData) {
+    alert('请在 Telegram 客户端内打开小程序以进行安全支付');
     return;
   }
+
   setLoading(true);
   setError(null);
   try {
+    // 🚀【修改点】：这里不需要在 body 里传 telegram_id 了，因为 getAuthHeaders 里带了安全的 initData 
     const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
       method: 'POST',
       headers: getAuthHeaders('application/json'),
-      body: JSON.stringify({ telegram_id: currentUser.id })
+      body: JSON.stringify({}) // 传个空对象即可，后端在 Depends(get_current_tg_user) 里解密
     });
     
     if (!response.ok) {
@@ -520,12 +524,14 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
     }
     
     const data = await response.json();
-    // 统一读取后端标准的 pay_url 字段
     const openUrl = data.pay_url || data.url; 
     
     if (openUrl) {
-      if (window.Telegram?.WebApp?.openLink) {
-        // 使用 Telegram 官方特权方法无缝拉起收银台
+      // 🚀【关键点】：Crypto Bot 链接属于 TG 内部原生链接（如 t.me/CryptoBot...）
+      // 优先使用 openTelegramLink，能像微信支付一样直接在小程序内弹窗拉起收银台
+      if (window.Telegram?.WebApp?.openTelegramLink) {
+        window.Telegram.WebApp.openTelegramLink(openUrl);
+      } else if (window.Telegram?.WebApp?.openLink) {
         window.Telegram.WebApp.openLink(openUrl);
       } else {
         window.open(openUrl, '_blank');
@@ -534,7 +540,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
       alert("未获取到有效的支付跳转链接，请检查后端 Crypto 凭证。");
     }
     
-    // 保持前端现有的每 5 秒自动同步刷新用户 VIP 状态的轮询逻辑
+    // 保持你原有的每 5 秒自动同步刷新用户 VIP 状态的轮询逻辑
     if (onRefreshUser) {
       let attempts = 0;
       const intervalId = setInterval(async () => {
