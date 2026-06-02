@@ -501,34 +501,36 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   const [payUrl, setPayUrl] = useState(null);
 
   const handleCreateInvoice = async () => {
-  // 1. 安全前置拦截：确保是在 TG 环境中打开
-  const initData = window.Telegram?.WebApp?.initData;
-  if (!initData) {
-    alert('请在 Telegram 客户端内打开小程序以进行安全支付');
+  // 优先从 TG 容器获取用户 ID
+  const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+  // 如果容器拿不到，再从你现有的 currentUser 状态里拿
+  const userId = tgUser?.id || currentUser?.id;
+
+  if (!userId) {
+    alert('未检测到您的 Telegram 账号信息，请在 TG 客户端内重新打开小程序');
     return;
   }
 
   setLoading(true);
   setError(null);
   try {
-    // 🚀【修改点】：这里不需要在 body 里传 telegram_id 了，因为 getAuthHeaders 里带了安全的 initData 
     const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
       method: 'POST',
-      headers: getAuthHeaders('application/json'),
-      body: JSON.stringify({}) // 传个空对象即可，后端在 Depends(get_current_tg_user) 里解密
+      headers: getAuthHeaders('application/json'), // 保持原有的安全头
+      body: JSON.stringify({ 
+        telegram_id: String(userId) // 🚀【关键】：双保险，Body 里也传一份明文 ID 供后端降级使用
+      })
     });
     
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || '创建发票失败');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || '创建发票失败');
     }
     
     const data = await response.json();
     const openUrl = data.pay_url || data.url; 
     
     if (openUrl) {
-      // 🚀【关键点】：Crypto Bot 链接属于 TG 内部原生链接（如 t.me/CryptoBot...）
-      // 优先使用 openTelegramLink，能像微信支付一样直接在小程序内弹窗拉起收银台
       if (window.Telegram?.WebApp?.openTelegramLink) {
         window.Telegram.WebApp.openTelegramLink(openUrl);
       } else if (window.Telegram?.WebApp?.openLink) {
@@ -540,13 +542,12 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
       alert("未获取到有效的支付跳转链接，请检查后端 Crypto 凭证。");
     }
     
-    // 保持你原有的每 5 秒自动同步刷新用户 VIP 状态的轮询逻辑
     if (onRefreshUser) {
       let attempts = 0;
       const intervalId = setInterval(async () => {
         attempts += 1;
         await onRefreshUser();
-        if (attempts >= 15) { // 提高到15次轮询
+        if (attempts >= 15) {
           clearInterval(intervalId);
         }
       }, 5000);
