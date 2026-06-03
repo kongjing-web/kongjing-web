@@ -43,7 +43,31 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshingUser, setRefreshingUser] = useState(false);
+  useEffect(() => {
+    // A. 判断是否是本地开发调试环境 (支持 localhost 和本地 IP)
+    const isLocalhost = 
+      window.location.hostname === "localhost" || 
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname.startsWith("192.168."); // 方便手机局域网调试
 
+    // B. 获取 Telegram 环境数据
+    const tgInitData = window.Telegram?.WebApp?.initData;
+
+    // C. 拦截逻辑：既没有 TG 环境，又不是本地开发，说明是外网别人乱入，直接弹窗并强制关闭
+    if (!tgInitData && !isLocalhost) {
+      alert("⚠️ 认证失败：请在 Telegram 手机或电脑客户端内打开此小程序！");
+      window.Telegram?.WebApp?.close();
+      return; // 这里的退出不会破坏 React 的底层 Hook 顺序了，因为 hooks 已经在上面声明完了
+    }
+
+    // D. 如果通过了拦截，打印一下当前环境日志，方便你调试
+    if (isLocalhost && !tgInitData) {
+      console.log("🛠️ 当前为【本地调试环境】，自动放行并分发 123456789 测试账号。");
+    } else {
+      console.log("🚀 当前为【Telegram 生产环境】，成功获取 initData，准备与后端安全通信。");
+      window.Telegram?.WebApp?.ready();
+    }
+  }, []); // 确保这段检查只在页面第一次打开时执行一次
   const refreshCurrentUser = async () => {
     if (!currentUser?.id) return;
     setRefreshingUser(true);
