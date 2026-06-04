@@ -23,46 +23,71 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from PIL import Image, ImageSequence
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 from telegram_formatter import sanitize_for_telegram, truncate_caption, smart_clean_inline_keyboard
-
-
+from dotenv import load_dotenv
+load_dotenv() 
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心")
 
 # 允许跨域请求
+# 读取环境变量中的跨域白名单字符串，并用逗号切割成列表
+cors_origins_str = os.getenv("CORS_ORIGINS", "https://kongjing-web-three.vercel.app")
+origins = [origin.strip() for origin in cors_origins_str.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,  # 这里传入解析好的域名列表
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-BOT_TOKEN = "8732461104:AAHiXL_2QzqHFRg2zfdvews2J5RDW2KWieA"
-CRYPTOBOT_TOKEN = "586003:AA8fUwUV0Y6cC0GBRUWtiJO9todPsTaKKKs"
+# 2. 🔐 从环境变量中读取 Token，如果读取不到则给一个默认值（可选）
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+
+# 3. 🛡️ 动态组装数据库配置
 DB_CONFIG = {
-    "dbname": "kongjing_db",
-    "user": "postgres",
-    "password": "741858",
-    "host": "127.0.0.1",
-    "port": 5432,
+    "dbname": os.getenv("DB_NAME", "kongjing_db"),
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD"),  # 密码被完美隐藏
+    "host": os.getenv("DB_HOST", "127.0.0.1"),
+    "port": int(os.getenv("DB_PORT", 5432)), # 注意：端口需要是整数类型
 }
-API_BASE_URL = "https://www.kongjing.online/api"
-UPLOAD_DIR = "/var/www/kongjing/uploads"
+
+API_BASE_URL = os.getenv("API_BASE_URL", "https://www.kongjing.online/api")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/var/www/kongjing/uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+MIN_CONNS = int(os.getenv("DB_MIN_CONN", 2))
+MAX_CONNS = int(os.getenv("DB_MAX_CONN", 20))
+
+try:
+    db_pool = ThreadedConnectionPool(
+        minconn=MIN_CONNS,
+        maxconn=MAX_CONNS,
+        **DB_CONFIG
+    )
+    print("🚀 数据库连接池初始化成功！")
+except Exception as e:
+    print(f"❌ 数据库连接池初始化失败: {e}")
+    raise e
+    
 @contextmanager
 def get_db_connection():
-    conn = psycopg2.connect(**DB_CONFIG)
+    # 从连接池中借出一个连接
+    conn = db_pool.getconn()
     cursor = conn.cursor()
     try:
         yield conn, cursor
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+        conn.commit()  # 如果业务执行顺利，自动提交事务
+    except Exception as e:
+        conn.rollback()  # 如果发生任何异常，自动回滚，保证数据安全
+        raise e
     finally:
         cursor.close()
-        conn.close()
+        # 🌟 极其重要：用完之后，千万不能 conn.close()，而是要放回池子里！
+        db_pool.putconn(conn)
 
 def _get_existing_columns(cursor, table_name: str):
     cursor.execute(

@@ -1094,6 +1094,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
               <select value={btnDraft.btnType} onChange={(e) => setBtnDraft((prev) => ({ ...prev, btnType: e.target.value, value: '' }))} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400">
                 <option value="url">url（普通外链）</option>
                 <option value="web_app">web_app（内嵌小程序）</option>
+                <option value="share">📢 内联裂变分享 (Share)</option>
                 <option value="callback">callback（后台静默交互）</option>
                 <option value="switch">switch（一键转发分享）</option>
                 <option value="pay">pay（官方支付）</option>
