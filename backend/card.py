@@ -484,7 +484,7 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> Optional[dict]:
 
 async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> dict:
     """
-    FastAPI 统一拦截器：防身份伪造
+    FastAPI 统一拦截器：防身份伪造，并自动加载用户角色与封禁状态
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="请重新从 Telegram 打开小程序以完成登录授权")
@@ -493,8 +493,56 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
     user_info = verify_telegram_init_data(init_data, BOT_TOKEN)
     if not user_info:
         raise HTTPException(status_code=403, detail="身份认证已失效或数据已被非法篡改")
-        
-    return user_info
+
+    telegram_id = str(user_info.get("id") or "").strip()
+    if not telegram_id:
+        raise HTTPException(status_code=403, detail="身份数据不完整")
+
+    with get_db_connection() as (_, cursor):
+        cursor.execute(
+            "SELECT telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
+            (telegram_id,),
+        )
+        row = cursor.fetchone()
+
+    if row:
+        role = row[2] or 'user'
+        if role == 'banned':
+            raise HTTPException(status_code=403, detail="权限不足：您的账号已被封禁")
+        return {
+            "id": row[0],
+            "telegram_id": row[0],
+            "username": row[1] or str(user_info.get("username") or ""),
+            "role": role,
+            "vip_until": row[3] or 0,
+            "bot_token": row[4] or "",
+            "bot_username": row[5] or "",
+            "language": row[6] or 'zh',
+            "monthly_published_count": row[7] or 0,
+            "last_reset_month": row[8] or '',
+        }
+
+    return {
+        "id": telegram_id,
+        "telegram_id": telegram_id,
+        "username": str(user_info.get("username") or ""),
+        "role": 'user',
+        "vip_until": 0,
+        "bot_token": "",
+        "bot_username": "",
+        "language": 'zh',
+        "monthly_published_count": 0,
+        "last_reset_month": '',
+    }
+
+
+# ==========================================
+# 管理员权限专用依赖
+# ==========================================
+def verify_admin(current_user: dict = Depends(get_current_tg_user)) -> dict:
+    if current_user.get("role") not in ("admin", "superuser"):
+        raise HTTPException(status_code=403, detail="权限不足")
+    return current_user
 
 # ==========================================
 # 工具函数保持原有逻辑不变
@@ -654,7 +702,7 @@ def _send_telegram_media(chat_id: str, bot_token: str, media_type: str, media_so
         raise HTTPException(status_code=400, detail=f"Telegram发送失败: {response.text}")
     return response.json()
 
-@app.get("/api/payment/prices")
+@app.get("/payment/prices")
 def get_current_prices():
     """
     让前端拉取后台最新调控的价格列表
@@ -784,6 +832,16 @@ class UpdateSettingsInput(BaseModel):
     user_id: Any
     bot_token: Optional[str] = None
     language: Optional[str] = None
+
+class AdminUpdateVipInput(BaseModel):
+    telegram_id: str
+    vip_until: Union[int, str]
+
+class AdminToggleBanInput(BaseModel):
+    telegram_id: str
+
+class AdminToggleCardStatusInput(BaseModel):
+    card_id: str
 
 # ==========================================
 # 核心路由接口 (移除前端传 ID 隐患，严格对齐原有变量)
@@ -1192,9 +1250,131 @@ def user_login(current_user: dict = Depends(get_current_tg_user)):
     return user
 
 # ==========================================
+# 管理员专用接口
+# ==========================================
+@app.get("/admin/dashboard")
+def admin_dashboard(current_user: dict = Depends(verify_admin)):
+    with get_db_connection() as (_, cursor):
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT COUNT(*) FROM cards")
+        total_cards = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT COALESCE(SUM(views),0), COALESCE(SUM(clicks),0) FROM cards")
+        row = cursor.fetchone() or (0, 0)
+        total_views, total_clicks = row[0], row[1]
+    return {
+        "total_users": total_users,
+        "total_cards": total_cards,
+        "total_views": total_views,
+        "total_clicks": total_clicks,
+    }
+
+@app.get("/admin/users")
+def admin_list_users(page: int = 1, size: int = 20, current_user: dict = Depends(verify_admin)):
+    offset = max(page - 1, 0) * size
+    with get_db_connection() as (_, cursor):
+        cursor.execute(
+            "SELECT telegram_id, username, role, vip_until, monthly_published_count FROM users ORDER BY telegram_id DESC LIMIT %s OFFSET %s",
+            (size, offset),
+        )
+        rows = cursor.fetchall()
+    users = [
+        {
+            "telegram_id": row[0],
+            "username": row[1],
+            "role": row[2],
+            "vip_until": row[3] or 0,
+            "monthly_published_count": row[4] or 0,
+        }
+        for row in rows
+    ]
+    return users
+
+@app.post("/admin/users/update-vip")
+def admin_update_user_vip(data: AdminUpdateVipInput, current_user: dict = Depends(verify_admin)):
+    telegram_id = str(data.telegram_id).strip()
+    if not telegram_id:
+        raise HTTPException(status_code=400, detail="缺少 telegram_id")
+
+    vip_until = data.vip_until
+    if isinstance(vip_until, str) and vip_until.isdigit():
+        vip_until = int(vip_until)
+    elif isinstance(vip_until, str):
+        try:
+            vip_until = int(datetime.fromisoformat(vip_until).timestamp())
+        except Exception:
+            try:
+                vip_until = int(float(vip_until))
+            except Exception:
+                raise HTTPException(status_code=400, detail="vip_until 时间格式不正确")
+    elif not isinstance(vip_until, int):
+        raise HTTPException(status_code=400, detail="vip_until 必须是时间戳或 ISO 格式字符串")
+
+    with get_db_connection() as (_, cursor):
+        cursor.execute("UPDATE users SET vip_until = %s WHERE telegram_id = %s", (vip_until, telegram_id))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="用户未找到")
+
+    return {"message": "VIP 到期时间已更新", "telegram_id": telegram_id, "vip_until": vip_until}
+
+@app.post("/admin/users/toggle-ban")
+def admin_toggle_user_ban(data: AdminToggleBanInput, current_user: dict = Depends(verify_admin)):
+    telegram_id = str(data.telegram_id).strip()
+    if not telegram_id:
+        raise HTTPException(status_code=400, detail="缺少 telegram_id")
+
+    with get_db_connection() as (_, cursor):
+        cursor.execute("SELECT role FROM users WHERE telegram_id = %s", (telegram_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户未找到")
+        current_role = row[0] or 'user'
+        new_role = 'user' if current_role == 'banned' else 'banned'
+        cursor.execute("UPDATE users SET role = %s WHERE telegram_id = %s", (new_role, telegram_id))
+
+    return {"message": f"用户角色已切换为 {new_role}", "telegram_id": telegram_id, "role": new_role}
+
+@app.get("/admin/cards")
+def admin_list_cards(page: int = 1, size: int = 20, current_user: dict = Depends(verify_admin)):
+    offset = max(page - 1, 0) * size
+    with get_db_connection() as (_, cursor):
+        cursor.execute(
+            "SELECT id, title, user_id, status FROM cards ORDER BY id DESC LIMIT %s OFFSET %s",
+            (size, offset),
+        )
+        rows = cursor.fetchall()
+    cards = [
+        {
+            "id": row[0],
+            "title": row[1],
+            "user_id": row[2],
+            "status": row[3] or 'active',
+        }
+        for row in rows
+    ]
+    return cards
+
+@app.post("/admin/cards/toggle-status")
+def admin_toggle_card_status(data: AdminToggleCardStatusInput, current_user: dict = Depends(verify_admin)):
+    card_id = str(data.card_id).strip()
+    if not card_id:
+        raise HTTPException(status_code=400, detail="缺少 card_id")
+
+    with get_db_connection() as (_, cursor):
+        cursor.execute("SELECT status FROM cards WHERE id = %s", (card_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="卡片未找到")
+        current_status = row[0] or ''
+        new_status = '已发布' if current_status == 'banned' else 'banned'
+        cursor.execute("UPDATE cards SET status = %s WHERE id = %s", (new_status, card_id))
+
+    return {"message": f"卡片状态已切换为 {new_status}", "card_id": card_id, "status": new_status}
+
+# ==========================================
 # 💳 CRYPTO BOT 支付核心整编
 # ==========================================
-@app.post("/api/payment/create_stars_invoice")
+@app.post("/payment/create_stars_invoice")
 async def create_stars_invoice(request: Request, current_user: dict = Depends(get_current_tg_user)):
     """
     【严防死守版】创建官方星星支付链接
@@ -1212,7 +1392,7 @@ async def create_stars_invoice(request: Request, current_user: dict = Depends(ge
         raise HTTPException(status_code=403, detail="安全合规校验未通过：身份凭证不匹配")
 
     # 动态获取后台调控价格
-    prices = calculate_live_prices()
+    prices = calculate_prices()
     stars_amount = prices["tg_stars"]
     
     order_id = f"STARS_{token_tg_id}_{int(time.time())}"

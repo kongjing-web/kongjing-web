@@ -8,7 +8,8 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { 
   FaLayerGroup, FaEye, FaShare, FaHeart, FaMousePointer, 
   FaChartBar, FaTrashAlt, FaEdit, FaChevronDown,
-  FaCoins, FaBell, FaBookOpen, FaHeadset, FaPaperPlane
+  FaCoins, FaBell, FaBookOpen, FaHeadset, FaPaperPlane,
+  FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock
 } from "react-icons/fa";
 
 // ==========================================================================
@@ -31,7 +32,7 @@ const getAuthHeaders = (contentType = null) => {
 };
 
 export default function App() {
-  // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings'
+  // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings' | 'admin'
   const [currentScreen, setCurrentScreen] = useState('home');
   // 当前正在被操作的卡片对象
   const [selectedCard, setSelectedCard] = useState(null);
@@ -276,6 +277,7 @@ export default function App() {
           onNavigateAnalytics={(card) => { setSelectedCard(card); setCurrentScreen('analytics'); }}
           onNavigateRecharge={() => { setCurrentScreen('recharge'); setSelectedCard(null); }}
           onNavigateSettings={() => { setCurrentScreen('settings'); setSelectedCard(null); }}
+          onNavigateAdmin={() => { setSelectedCard(null); setCurrentScreen('admin'); }}
         />
       )}
 
@@ -287,6 +289,12 @@ export default function App() {
           currentUser={currentUser}
           onBack={() => setCurrentScreen('home')}
           onSave={(userInfo) => { setCurrentUser(userInfo); setCurrentScreen('home'); }}
+        />
+      )}
+      {currentScreen === 'admin' && (
+        <AdminDashboard
+          currentUser={currentUser}
+          onBack={() => setCurrentScreen('home')}
         />
       )}
       
@@ -315,10 +323,329 @@ export default function App() {
   );
 }
 
+function AdminDashboard({ currentUser, onBack }) {
+  const [activeTab, setActiveTab] = useState('users');
+  const [dashboard, setDashboard] = useState({ total_users: 0, total_cards: 0, total_views: 0, total_clicks: 0 });
+  const [users, setUsers] = useState([]);
+  const [cards, setCards] = useState([]);
+  const [announcement, setAnnouncement] = useState('');
+  const [userPage, setUserPage] = useState(1);
+  const [cardPage, setCardPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchDashboard = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${BASE_URL}/admin/dashboard`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error('权限不足或网络异常');
+      }
+      const data = await response.json();
+      setDashboard(data);
+    } catch (error) {
+      console.error('加载管理面板失败:', error);
+      alert('无法加载管理面板，请检查管理员权限。');
+      onBack();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAdminUsers = async (page = 1) => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${BASE_URL}/admin/users?page=${page}&size=20`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error('获取用户列表失败');
+      }
+      const data = await response.json();
+      setUsers(Array.isArray(data) ? data : data.data || []);
+      setUserPage(page);
+    } catch (error) {
+      console.error('获取用户失败:', error);
+      alert('获取用户列表失败，请稍后重试');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAdminCards = async (page = 1) => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${BASE_URL}/admin/cards?page=${page}&size=20`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error('获取卡片列表失败');
+      }
+      const data = await response.json();
+      setCards(Array.isArray(data) ? data : data.data || []);
+      setCardPage(page);
+    } catch (error) {
+      console.error('获取卡片失败:', error);
+      alert('获取卡片列表失败，请稍后重试');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const parseVipValue = (value) => {
+    if (typeof value === 'number') return Math.floor(value);
+    if (!value) return null;
+    const num = Number(value);
+    if (!Number.isNaN(num) && String(num).length >= 10) {
+      return Math.floor(num);
+    }
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) {
+      return Math.floor(parsed / 1000);
+    }
+    return null;
+  };
+
+  const handleUpdateVip = async (telegram_id) => {
+    const raw = window.prompt('请输入新的 VIP 过期时间，支持时间戳或 yyyy-mm-dd hh:mm:ss：', '');
+    if (!raw) return;
+    const vip_until = parseVipValue(raw);
+    if (!vip_until) {
+      return alert('输入的 VIP 到期时间格式不正确');
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${BASE_URL}/admin/users/update-vip`, {
+        method: 'POST',
+        headers: getAuthHeaders('application/json'),
+        body: JSON.stringify({ telegram_id, vip_until }),
+      });
+      if (!response.ok) {
+        throw new Error('更新 VIP 失败');
+      }
+      alert('VIP 到期时间已更新');
+      fetchAdminUsers(userPage);
+    } catch (error) {
+      console.error('更新 VIP 失败:', error);
+      alert('更新 VIP 失败，请稍后重试');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleToggleBan = async (telegram_id) => {
+    if (!window.confirm('确认要切换该用户的封禁状态吗？')) return;
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${BASE_URL}/admin/users/toggle-ban`, {
+        method: 'POST',
+        headers: getAuthHeaders('application/json'),
+        body: JSON.stringify({ telegram_id }),
+      });
+      if (!response.ok) {
+        throw new Error('封禁切换失败');
+      }
+      const data = await response.json();
+      alert(data.message || '用户状态已更新');
+      fetchAdminUsers(userPage);
+    } catch (error) {
+      console.error('切换封禁失败:', error);
+      alert('切换封禁失败，请稍后重试');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleToggleCardStatus = async (card_id) => {
+    if (!window.confirm('确认要切换该卡片的审核状态吗？')) return;
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${BASE_URL}/admin/cards/toggle-status`, {
+        method: 'POST',
+        headers: getAuthHeaders('application/json'),
+        body: JSON.stringify({ card_id }),
+      });
+      if (!response.ok) {
+        throw new Error('卡片状态切换失败');
+      }
+      const data = await response.json();
+      alert(data.message || '卡片状态已更新');
+      fetchAdminCards(cardPage);
+      fetchDashboard();
+    } catch (error) {
+      console.error('切换卡片状态失败:', error);
+      alert('切换卡片状态失败，请稍后重试');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handlePublishAnnouncement = () => {
+    if (!announcement.trim()) {
+      return alert('请输入公告内容');
+    }
+    alert('全局公告已发布：' + announcement.trim());
+    setAnnouncement('');
+  };
+
+  useEffect(() => {
+    fetchDashboard();
+    if (activeTab === 'users') {
+      fetchAdminUsers(userPage);
+    } else {
+      fetchAdminCards(cardPage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  return (
+    <div className="w-full max-w-4xl mx-auto min-h-screen bg-slate-950 text-slate-100 pb-16">
+      <div className="sticky top-0 z-40 bg-slate-950/95 border-b border-slate-800 px-4 py-4 backdrop-blur-lg">
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={onBack} className="inline-flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-amber-200 hover:bg-slate-800 transition">
+            <FaArrowLeft /> 返回主页
+          </button>
+          <div className="text-center">
+            <div className="text-xs uppercase tracking-[0.3em] text-amber-300/80">空境系统</div>
+            <div className="text-xl font-bold text-white">全局管理后台</div>
+          </div>
+          <div className="text-right text-xs text-slate-400">{currentUser?.username || 'Admin'}</div>
+        </div>
+      </div>
+
+      <div className="px-4 py-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-3xl border border-amber-500/20 bg-slate-900/80 p-4 shadow-lg shadow-amber-500/10">
+          <div className="text-sm uppercase tracking-[0.2em] text-amber-300">总用户数</div>
+          <div className="mt-4 text-3xl font-bold text-white">{dashboard.total_users ?? 0}</div>
+        </div>
+        <div className="rounded-3xl border border-slate-700/60 bg-slate-900/70 p-4 shadow-lg shadow-slate-950/20">
+          <div className="text-sm uppercase tracking-[0.2em] text-slate-300">总卡片数</div>
+          <div className="mt-4 text-3xl font-bold text-white">{dashboard.total_cards ?? 0}</div>
+        </div>
+        <div className="rounded-3xl border border-slate-700/60 bg-slate-900/70 p-4 shadow-lg shadow-slate-950/20">
+          <div className="text-sm uppercase tracking-[0.2em] text-slate-300">总浏览量</div>
+          <div className="mt-4 text-3xl font-bold text-white">{dashboard.total_views ?? 0}</div>
+        </div>
+        <div className="rounded-3xl border border-slate-700/60 bg-slate-900/70 p-4 shadow-lg shadow-slate-950/20">
+          <div className="text-sm uppercase tracking-[0.2em] text-slate-300">总点击量</div>
+          <div className="mt-4 text-3xl font-bold text-white">{dashboard.total_clicks ?? 0}</div>
+        </div>
+      </div>
+
+      <div className="px-4 py-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {[
+            { key: 'users', label: '👥 用户管理', icon: <FaUsers /> },
+            { key: 'cards', label: '🃏 内容审计', icon: <FaClipboardList /> },
+            { key: 'system', label: '📢 系统配置', icon: <FaBullhorn /> },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${activeTab === tab.key ? 'bg-amber-400 text-slate-950 shadow-lg shadow-amber-400/25' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+            >
+              <span className="inline-flex items-center gap-2">{tab.icon}{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="px-4 pb-8">
+        {activeTab === 'users' && (
+          <div className="space-y-4">
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 text-sm text-slate-400">用户管理：展示 telegram_id、用户名、角色、VIP 到期、月剩余额度；支持 VIP 修改与封禁切换。</div>
+            <div className="grid gap-3">
+              {users.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900/70 p-6 text-center text-slate-500">暂无用户数据</div>
+              ) : users.map((user) => {
+                const isBanned = user.role === 'banned';
+                return (
+                  <div key={user.telegram_id} className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-inner shadow-slate-950/20">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-2">
+                        <div className="text-sm font-semibold text-white">{user.username || '匿名用户'}</div>
+                        <div className="text-xs text-slate-400">TG ID: {user.telegram_id}</div>
+                        <div className="text-xs text-slate-400">角色: <span className="font-semibold text-amber-300">{user.role}</span></div>
+                        <div className="text-xs text-slate-400">VIP 到期: <span className="font-semibold text-white">{user.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000) ? new Date(Number(user.vip_until) * 1000).toLocaleString() : '未激活'}</span></div>
+                        <div className="text-xs text-slate-400">月发布计数: <span className="font-semibold text-white">{user.monthly_published_count ?? 0}</span></div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => handleUpdateVip(user.telegram_id)} disabled={submitting} className="rounded-2xl bg-amber-400 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-300 transition">修改 VIP</button>
+                        <button onClick={() => handleToggleBan(user.telegram_id)} disabled={submitting} className={`rounded-2xl px-3 py-2 text-xs font-semibold transition ${isBanned ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400' : 'bg-rose-500 text-white hover:bg-rose-400'}`}>
+                          {isBanned ? '解封用户' : '封禁用户'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
+              <button disabled={userPage <= 1 || loading} onClick={() => fetchAdminUsers(userPage - 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">上一页</button>
+              <span>第 {userPage} 页</span>
+              <button disabled={loading} onClick={() => fetchAdminUsers(userPage + 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">下一页</button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'cards' && (
+          <div className="space-y-4">
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 text-sm text-slate-400">内容审计：展示卡片 ID、标题、创建者、状态；支持一键下架 / 恢复。</div>
+            <div className="grid gap-3">
+              {cards.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900/70 p-6 text-center text-slate-500">暂无卡片记录</div>
+              ) : cards.map((card) => {
+                const isBanned = card.status === 'banned';
+                return (
+                  <div key={card.id} className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-inner shadow-slate-950/20">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-1">
+                        <div className="text-sm font-semibold text-white">{card.title || '未命名卡片'}</div>
+                        <div className="text-xs text-slate-400">卡片 ID: {card.id}</div>
+                        <div className="text-xs text-slate-400">创建者: {card.user_id || '未知'}</div>
+                        <div className="text-xs text-slate-400">状态: <span className={`font-semibold ${isBanned ? 'text-rose-400' : 'text-emerald-300'}`}>{isBanned ? '已下架' : '正常'}</span></div>
+                      </div>
+                      <button onClick={() => handleToggleCardStatus(card.id)} disabled={submitting} className={`rounded-2xl px-3 py-2 text-xs font-semibold transition ${isBanned ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400' : 'bg-rose-500 text-white hover:bg-rose-400'}`}>
+                        {isBanned ? '恢复卡片' : '下架卡片'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
+              <button disabled={cardPage <= 1 || loading} onClick={() => fetchAdminCards(cardPage - 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">上一页</button>
+              <span>第 {cardPage} 页</span>
+              <button disabled={loading} onClick={() => fetchAdminCards(cardPage + 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">下一页</button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'system' && (
+          <div className="space-y-4">
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 text-sm text-slate-400">系统配置：发布跑马灯公告，通知全网用户。</div>
+            <textarea
+              value={announcement}
+              onChange={(e) => setAnnouncement(e.target.value)}
+              rows={6}
+              className="w-full rounded-3xl border border-slate-700 bg-slate-900/80 p-4 text-sm text-slate-100 outline-none focus:border-amber-400"
+              placeholder="请输入系统跑马灯公告内容..."
+            />
+            <button onClick={handlePublishAnnouncement} className="inline-flex items-center gap-2 rounded-3xl bg-amber-400 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-amber-400/20 hover:bg-amber-300 transition">发布公告</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ==========================================================================
    1. 首页组件 (HomeScreen)
    ========================================================================== */
-function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings }) {
+function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
@@ -342,6 +669,8 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
   const botStatus = isAnonymous
     ? { text: '正在等待 Telegram 授权登录...', className: 'text-gray-400' }
     : (user?.has_bot ? { text: `● 已绑定: @${user?.bot_username}`, className: 'text-emerald-500' } : { text: '○ 当前尚未绑定专属bot', className: 'text-amber-500' });
+
+  const isAdmin = user?.role === 'admin' || user?.role === 'superuser';
 
   const toggleCardActions = (id) => {
     setActiveCardId(activeCardId === id ? null : id);
@@ -450,6 +779,24 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
         <div className="text-right"><span className="text-[10px] bg-slate-100 font-bold text-slate-500 px-2 py-1 rounded-md">Console v1.2</span></div>
       </div>
       {/* 注：已将下方冗余的用户信息卡片移除，相关显示已整合至顶部 Header */}
+
+      {isAdmin && (
+        <div className="mx-4 mt-4 rounded-3xl border border-amber-400/40 bg-gradient-to-r from-amber-100/80 via-yellow-50 to-slate-50 p-4 shadow-lg shadow-amber-200/30">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">管理员专用</p>
+              <p className="mt-1 text-sm font-bold text-slate-900">空境系统管理后台已开启</p>
+            </div>
+            <button
+              onClick={onNavigateAdmin}
+              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.15em] text-amber-200 shadow-lg shadow-slate-900/10 hover:bg-slate-800 transition"
+            >
+              <FaLock size={14} /> 进入后台
+            </button>
+          </div>
+          <p className="mt-3 text-[11px] text-slate-500">仅限管理员访问。前端页面伪造无法绕过后端 `verify_admin` 权限校验。</p>
+        </div>
+      )}
 
       <div className="p-4 pb-12">
         <p className="text-[11px] text-gray-400 mt-2 mb-3 font-bold uppercase tracking-widest">选择卡片类型</p >
