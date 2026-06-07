@@ -11,6 +11,8 @@ import uuid
 import hmac
 import hashlib
 import requests
+import threading
+import logging
 from contextlib import contextmanager
 from functools import partial
 from typing import List, Optional, Union, Any
@@ -656,6 +658,110 @@ def _compress_video(input_path: str, output_path: str):
 
 def _build_upload_urls(filename: str) -> str:
     return f"https://www.kongjing.online/uploads/{filename}"
+
+
+# -----------------------------
+# 公开统计接口（无鉴权）
+# -----------------------------
+@app.post("/api/cards/{card_id}/track-view")
+def track_view(card_id: str):
+    try:
+        with get_db_connection() as (_, cursor):
+            cursor.execute("UPDATE cards SET views = COALESCE(views,0) + 1 WHERE id = %s RETURNING views", (card_id,))
+            row = cursor.fetchone()
+        return {"status": "ok", "views": row[0] if row and row[0] is not None else 0}
+    except Exception as e:
+        logging.exception("track_view error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/cards/{card_id}/track-click")
+def track_click(card_id: str):
+    try:
+        with get_db_connection() as (_, cursor):
+            cursor.execute("UPDATE cards SET clicks = COALESCE(clicks,0) + 1 WHERE id = %s RETURNING clicks", (card_id,))
+            row = cursor.fetchone()
+        return {"status": "ok", "clicks": row[0] if row and row[0] is not None else 0}
+    except Exception as e:
+        logging.exception("track_click error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -----------------------------
+# 上传目录清理：删除 7 天未被引用的文件
+# -----------------------------
+def clean_expired_uploads(retention_days: int = 7):
+    try:
+        now_ts = time.time()
+        retention_seconds = retention_days * 24 * 3600
+
+        # 1) 收集数据库中正在被使用的图片文件名
+        used_names = set()
+        with get_db_connection() as (_, cursor):
+            cursor.execute("SELECT img FROM cards WHERE img IS NOT NULL AND img != ''")
+            rows = cursor.fetchall()
+        for r in rows:
+            try:
+                if not r:
+                    continue
+                img_url = str(r[0])
+                name = os.path.basename(img_url)
+                if name:
+                    used_names.add(name)
+            except Exception:
+                continue
+
+        # 2) 遍历 UPLOAD_DIR 下的文件，删除超过时限且未被引用的文件
+        if not os.path.isdir(UPLOAD_DIR):
+            return
+
+        for fname in os.listdir(UPLOAD_DIR):
+            try:
+                fpath = os.path.join(UPLOAD_DIR, fname)
+                if not os.path.isfile(fpath):
+                    continue
+                # 跳过临时分片目录
+                if fname == 'tmp' or fname.startswith('tmp'):
+                    continue
+                mtime = os.path.getmtime(fpath)
+                age = now_ts - mtime
+                if age > retention_seconds and fname not in used_names:
+                    try:
+                        os.remove(fpath)
+                        logging.info(f"clean_expired_uploads: removed expired file {fpath}")
+                    except Exception as re:
+                        logging.exception(f"failed to remove file {fpath}")
+            except Exception:
+                logging.exception("error during scanning uploads")
+    except Exception:
+        logging.exception("clean_expired_uploads failed")
+
+
+def _start_cleanup_worker(interval_hours: int = 24):
+    def worker():
+        # 首次启动时立即执行一次
+        try:
+            clean_expired_uploads()
+        except Exception:
+            logging.exception('initial clean failed')
+        while True:
+            try:
+                time.sleep(interval_hours * 3600)
+                clean_expired_uploads()
+            except Exception:
+                logging.exception('periodic clean failed')
+
+    t = threading.Thread(target=worker, daemon=True, name='uploads-cleaner')
+    t.start()
+
+
+@app.on_event("startup")
+def startup_background_tasks():
+    # 启动后台清理守护线程
+    try:
+        _start_cleanup_worker()
+    except Exception:
+        logging.exception('failed to start cleanup worker')
 
 def _merge_and_compress_chunks(upload_id: str, filename: str, total_chunks: int) -> str:
     chunk_dir = os.path.join(UPLOAD_DIR, 'tmp', _sanitize_filename(upload_id))

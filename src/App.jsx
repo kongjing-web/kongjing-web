@@ -31,6 +31,23 @@ const getAuthHeaders = (contentType = null) => {
   return headers;
 };
 
+// 统计上报（公开接口，无需鉴权）
+const trackView = async (cardId) => {
+  try {
+    await fetch(`${BASE_URL}/cards/${cardId}/track-view`, { method: 'POST' });
+  } catch (e) {
+    console.warn('trackView failed', e);
+  }
+};
+
+const trackClick = async (cardId) => {
+  try {
+    await fetch(`${BASE_URL}/cards/${cardId}/track-click`, { method: 'POST' });
+  } catch (e) {
+    console.warn('trackClick failed', e);
+  }
+};
+
 export default function App() {
   // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings' | 'admin'
   const [currentScreen, setCurrentScreen] = useState('home');
@@ -1714,6 +1731,11 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
    ========================================================================== */
 function PreviewScreen({ card, onBack }) {
   if (!card) return null;
+  useEffect(() => {
+    if (card && card.id) {
+      trackView(card.id);
+    }
+  }, [card && card.id]);
   return (
     <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
@@ -1737,7 +1759,7 @@ function PreviewScreen({ card, onBack }) {
           {card.buttons && card.buttons.length > 0 && (
             <div className="p-2 border-t border-gray-50 bg-white grid gap-1.5" style={{ gridTemplateColumns: `repeat(${card.buttons.length > 1 ? 2 : 1}, 1fr)` }}>
               {card.buttons.map(btn => (
-                <a key={btn.id} href={btn.url || "#placeholder"} target="_blank" rel="noopener noreferrer" className="py-2 px-1 bg-[#F1F5F9] rounded-md text-center text-[13px] text-[#24A1DE] font-normal truncate block shadow-sm hover:bg-slate-100">
+                <a key={btn.id} href={btn.url || "#placeholder"} target="_blank" rel="noopener noreferrer" onClick={() => trackClick(card.id)} className="py-2 px-1 bg-[#F1F5F9] rounded-md text-center text-[13px] text-[#24A1DE] font-normal truncate block shadow-sm hover:bg-slate-100">
                   {btn.text}
                 </a>
               ))}
