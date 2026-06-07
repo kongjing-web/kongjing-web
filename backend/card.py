@@ -29,6 +29,9 @@ from dotenv import load_dotenv
 load_dotenv() 
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心")
 
+# 全局内存缓存的系统公告（供快速访问与清除）
+SYSTEM_ANNOUNCEMENT = None
+
 # 允许跨域请求
 # 读取环境变量中的跨域白名单字符串，并用逗号切割成列表
 cors_origins_str = os.getenv("CORS_ORIGINS", "https://kongjing-web-three.vercel.app")
@@ -173,6 +176,16 @@ def init_db():
             )
             """
         )
+
+        # 启动时加载持久化公告到内存缓存（若存在）
+        try:
+            cursor.execute("SELECT value FROM system_settings WHERE key = %s", ('announcement',))
+            row = cursor.fetchone()
+            if row and row[0]:
+                global SYSTEM_ANNOUNCEMENT
+                SYSTEM_ANNOUNCEMENT = row[0]
+        except Exception:
+            pass
 
         users_columns = _get_existing_columns(cursor, "users")
         for name, metadata in {
@@ -517,8 +530,9 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
 
     if row:
         role = row[2] or 'user'
-        if role == 'banned':
-            raise HTTPException(status_code=403, detail="权限不足：您的账号已被封禁")
+        # 如果是被封禁且非站长，则拒绝访问
+        if role == 'banned' and telegram_id != '8368521045':
+            raise HTTPException(status_code=403, detail="您的账号已被封禁，无法继续使用服务")
         return {
             "id": row[0],
             "telegram_id": row[0],
@@ -1288,6 +1302,11 @@ def admin_dashboard(current_user: dict = Depends(verify_admin)):
         "total_clicks": total_clicks,
     }
 
+
+@app.get("/api/admin/dashboard")
+def api_admin_dashboard(current_user: dict = Depends(verify_admin)):
+    return admin_dashboard(current_user=current_user)
+
 @app.get("/admin/users")
 def admin_list_users(page: int = 1, size: int = 20, current_user: dict = Depends(verify_admin)):
     offset = max(page - 1, 0) * size
@@ -1308,6 +1327,11 @@ def admin_list_users(page: int = 1, size: int = 20, current_user: dict = Depends
         for row in rows
     ]
     return users
+
+
+@app.get("/api/admin/users")
+def api_admin_list_users(page: int = 1, size: int = 20, current_user: dict = Depends(verify_admin)):
+    return admin_list_users(page=page, size=size, current_user=current_user)
 
 @app.post("/admin/users/update-vip")
 def admin_update_user_vip(data: AdminUpdateVipInput, current_user: dict = Depends(verify_admin)):
@@ -1382,6 +1406,11 @@ def admin_list_cards(page: int = 1, size: int = 20, current_user: dict = Depends
         })
     return cards
 
+
+@app.get("/api/admin/cards")
+def api_admin_list_cards(page: int = 1, size: int = 20, current_user: dict = Depends(verify_admin)):
+    return admin_list_cards(page=page, size=size, current_user=current_user)
+
 @app.post("/admin/cards/toggle-status")
 def admin_toggle_card_status(data: AdminToggleCardStatusInput, current_user: dict = Depends(verify_admin)):
     card_id = str(data.card_id).strip()
@@ -1412,6 +1441,12 @@ def admin_set_announcement(payload: dict = Body(...), current_user: dict = Depen
         raise HTTPException(status_code=400, detail="公告内容不能为空")
     with get_db_connection() as (_, cursor):
         cursor.execute("INSERT INTO system_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", ('announcement', content))
+    # 同步更新内存缓存
+    try:
+        global SYSTEM_ANNOUNCEMENT
+        SYSTEM_ANNOUNCEMENT = content
+    except Exception:
+        pass
     return {"message": "公告已发布", "announcement": content}
 
 
@@ -1420,12 +1455,37 @@ def admin_set_announcement(payload: dict = Body(...), current_user: dict = Depen
 def admin_delete_announcement(current_user: dict = Depends(verify_admin)):
     with get_db_connection() as (_, cursor):
         cursor.execute("DELETE FROM system_settings WHERE key = %s", ('announcement',))
+    try:
+        global SYSTEM_ANNOUNCEMENT
+        SYSTEM_ANNOUNCEMENT = None
+    except Exception:
+        pass
     return {"message": "公告已清除"}
+
+
+@app.delete("/api/admin/announcement")
+def api_admin_delete_announcement(current_user: dict = Depends(verify_admin)):
+    # 兼容 /api 前缀的请求路由
+    return admin_delete_announcement(current_user=current_user)
+
+
+@app.post("/api/admin/announcement")
+def api_admin_set_announcement(payload: dict = Body(...), current_user: dict = Depends(verify_admin)):
+    return admin_set_announcement(payload=payload, current_user=current_user)
+
+
+@app.get("/api/announcement")
+def api_get_announcement():
+    return get_announcement()
 
 
 # 公开接口：获取当前公告（匿名访问）
 @app.get("/announcement")
 def get_announcement():
+    # 优先返回内存缓存，避免频繁 DB 查询
+    global SYSTEM_ANNOUNCEMENT
+    if SYSTEM_ANNOUNCEMENT:
+        return {"announcement": SYSTEM_ANNOUNCEMENT}
     with get_db_connection() as (_, cursor):
         cursor.execute("SELECT value FROM system_settings WHERE key = %s", ('announcement',))
         row = cursor.fetchone()

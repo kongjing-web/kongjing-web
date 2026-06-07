@@ -716,6 +716,7 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
               placeholder="请输入系统跑马灯公告内容..."
             />
             <button onClick={handlePublishAnnouncement} className="inline-flex items-center gap-2 rounded-3xl bg-amber-400 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-amber-400/20 hover:bg-amber-300 transition">发布公告</button>
+            <button onClick={handleClearAnnouncement} disabled={submitting} className="inline-flex items-center gap-2 rounded-3xl bg-red-500 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-red-600 transition">清除当前公告</button>
           </div>
         )}
       </div>
