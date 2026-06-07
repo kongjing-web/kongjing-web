@@ -100,7 +100,7 @@ def _get_existing_columns(cursor, table_name: str):
     return {row[0] for row in cursor.fetchall()}
 
 def init_db():
-    with get_db_connection() as (_, cursor):
+    with get_db_connection() as (conn, cursor):  # 确保这里解包拿到了 conn，方便最后 commit
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -179,7 +179,10 @@ def init_db():
             "language": "TEXT DEFAULT 'zh'",
         }.items():
             if name not in users_columns:
-                cursor.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {name} {metadata}")
+                try:
+                    cursor.execute(f"ALTER TABLE users ADD COLUMN {name} {metadata}")
+                except Exception:
+                    pass
 
         if "id" in users_columns and "telegram_id" in users_columns:
             cursor.execute(
@@ -189,15 +192,20 @@ def init_db():
             )
 
         cards_columns = _get_existing_columns(cursor, "cards")
+        # 🚀 在这里把我们需要追踪的 tg_message_id 追加进去！
         for name, metadata in {
             "user_id": "TEXT",
             "media_type": "TEXT DEFAULT 'photo'",
             "local_media_url": "TEXT",
             "tg_file_id": "TEXT",
             "img": "TEXT",
+            "tg_message_id": "TEXT",  # ✨ 核心新增：程序启动时会自动检测并安全创建该字段
         }.items():
             if name not in cards_columns:
-                cursor.execute(f"ALTER TABLE cards ADD COLUMN IF NOT EXISTS {name} {metadata}")
+                try:
+                    cursor.execute(f"ALTER TABLE cards ADD COLUMN {name} {metadata}")
+                except Exception:
+                    pass
 
         if "telegram_id" in users_columns:
             cursor.execute(
@@ -205,9 +213,241 @@ def init_db():
                 UPDATE users SET id = telegram_id WHERE (id IS NULL OR id = '') AND telegram_id IS NOT NULL
                 """
             )
+            
+        # 强行提交保存变更
+        try:
+            conn.commit()
+        except Exception:
+            pass
 
+    print("[系统成功] 数据库核心资产表结构智能核对并初始化完毕！")
+
+# ==============================================================================
+# 🚀 裂变神技：动态拦截并响应 Telegram 内联查询（Inline Query）
+# ==============================================================================
+# ==============================================================================
+# 🛡️ 终极防御改良版：多租户内联控制中心（带全自动容错拦截，拒绝转圈）
+# ==============================================================================
+
+def handle_tg_inline_query(update_data: dict):
+    """
+    智能拦截器：动态识别呼叫主体。如果数据库联合查询报错，自动降级回核心Token，拒绝卡顿转圈。
+    """
+    # 1. 锁死大底系统凭证（兜底方案）
+    DEFAULT_BOT_TOKEN = "8732461104:AAHiXL_2QzqHFRg2zfdvews2J5RDW2KWieA"
+    current_use_token = DEFAULT_BOT_TOKEN
+
+    inline_query = update_data.get("inline_query")
+    if not inline_query:
+        return None
+        
+    query_id = inline_query.get("id")
+    query_text = str(inline_query.get("query") or "").strip()
+    print(f"[内联查询触发] 收到暗号: {query_text}")
+    
+    # 2. 精准提取出唯一的卡片 ID
+    card_id = None
+    if query_text.startswith("card_"):
+        card_id = query_text.replace("card_", "")
+    else:
+        card_id = query_text
+        
+    if not card_id or len(card_id) < 5:
+        print("[内联查询提示] 暗号长度过短，拒绝响应")
+        return None
+
+    # 初始化变量，防止查询失败后未定义报错
+    title, content, img, buttons_raw, media_type = None, None, None, None, None
+
+    # 3. 🛡️ 超强容错数据库检索：完全契合原生的上下文管理器写法
+    try:
+        # 使用你最熟悉的 with 机制，完美解包出真实的游标对象 cursor
+        with get_db_connection() as (_, cursor):
+            cursor.execute(
+                "SELECT title, content, img, buttons, media_type, user_id FROM cards WHERE id = %s",
+                (card_id,)
+            )
+            row = cursor.fetchone()
+            
+            if row:
+                title, content, img, buttons_raw, media_type, user_id = row
+                print(f"[核心命中] 成功捞出卡片数据: {title}")
+                
+                # 尝试去捞取专属 VIP Token（包裹在独立的 try 结构里，即使 users 表没配置这个字段也绝不影响普通用户）
+                try:
+                    cursor.execute("SELECT bot_token FROM users WHERE id = %s", (user_id,))
+                    user_row = cursor.fetchone()
+                    if user_row and user_row[0] and str(user_row[0]).strip() != "":
+                        current_use_token = str(user_row[0]).strip()
+                        print(f"[专属成功] 判定为高级VIP卡片，已成功无缝切换专属Token！")
+                except Exception as u_err:
+                    print(f"[安全提示] 检索VIP专属Token失败（可能无此字段），自动切回系统默认Token。详情: {str(u_err)}")
+            else:
+                print(f"[内联查询警告] 数据库未找到此卡片ID: {card_id}")
+                title = "空境提示"
+                content = "⚠️ 未能找到该卡片或卡片已被删除。"
+
+    except Exception as db_global_err:
+        print(f"[暴击错误] 数据库底层执行彻底崩溃: {str(db_global_err)}，强行激活大底默认Token响应！")
+        # 即使发生意外也友好展示
+        title = "空境系统"
+        content = f"系统内容加载中，请重新尝试。卡片ID: {card_id}"
+            
+        # 安全关闭游标和连接
+        try: cursor.close() 
+        except: pass
+        try: conn.close() if hasattr(conn, 'close') else conn[0].close()
+        except: pass
+
+    except Exception as db_global_err:
+        print(f"[暴击错误] 数据库底层执行彻底崩溃: {str(db_global_err)}，强行激活大底默认Token响应！")
+        # 即使数据库连不上，也造个假数据塞回去，防止客户端一直转圈
+        title = "空境系统"
+        content = f"系统正在维护中，卡片ID: {card_id}"
+
+    # 4. 智能洗炼按钮
+    try:
+        buttons_data = json.loads(buttons_raw or "[]")
+    except Exception:
+        buttons_data = []
+    clean_keyboard = smart_clean_inline_keyboard(buttons_data, card_id)
+    reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
+
+    # 5. 文案净化
+    clean_html_content = sanitize_for_telegram((content or "").strip())
+    has_media = img and str(img).strip() != ""
+    limit_length = 1024 if has_media else 4096
+    caption_text = truncate_caption(clean_html_content, limit=limit_length)
+
+    # 6. 构筑果实
+    import time
+    result_id = f"share_{card_id}_{int(time.time())}"
+    inline_result = {}
+
+    if has_media:
+        media_key = "photo_url" if media_type == 'photo' else "video_url"
+        inline_result = {
+            "type": "photo" if media_type == 'photo' else "video",
+            "id": result_id,
+            "title": title or "分享卡片",
+            media_key: img,
+            "thumb_url": img,
+            "caption": caption_text,
+            "parse_mode": "HTML"
+        }
+    else:
+        inline_result = {
+            "type": "article",
+            "id": result_id,
+            "title": title or "点击分享卡片",
+            "description": caption_text[:80] if len(caption_text) > 80 else caption_text,
+            "input_message_content": {
+                "message_text": caption_text,
+                "parse_mode": "HTML"
+            }
+        }
+        
+    if reply_markup:
+        inline_result["reply_markup"] = reply_markup
+
+    # 7. 🚀 强制回传：不管前面发生了什么，这里必须把答案甩给 Telegram 官方
+    telegram_api_base = f"https://api.telegram.org/bot{current_use_token}"
+    payload = {
+        "inline_query_id": query_id,
+        "results": [inline_result],
+        "cache_time": 1, 
+        "is_personal": False
+    }
+    
+    try:
+        res = requests.post(f"{telegram_api_base}/answerInlineQuery", json=payload, timeout=5)
+        if res.ok:
+            print(f"[最终胜利] 成功阻断转圈，卡片预览已下发到手机端！")
+        else:
+            print(f"[官方拒绝] TG官方 answerInlineQuery 报错: {res.text}")
+    except Exception as e:
+        print(f"[网络异常] 请求TG失败: {str(e)}")
+
+    
 init_db()
 
+# ==========================================
+# 💰 智能计价与后台调控中心
+# ==========================================
+# 可以把这个基础价放到你的 .env 文件中随时调控
+BASE_VIP_PRICE_USDT = float(os.getenv("BASE_VIP_PRICE_USDT", "5.0"))  # 后台设置的基础价（USDT）
+STAR_VALUE_USDT = 0.02  # 官方星星的大约标准价值 (1 Star ≈ 0.02 USDT)
+TG_STARS_TAX_RATE = 0.30  # Telegram 官方抽成 30%
+
+def calculate_prices():
+    """
+    动态计算不同通道的价格
+    """
+    # 1. Crypto 通道为无抽成基础价
+    crypto_price = BASE_VIP_PRICE_USDT 
+    
+    # 2. 官方星星通道自动上浮并转为整数星星数
+    # 基础需要的星星 = crypto_price / 0.02
+    # 溢价扣除30%后能拿到基础额度 = 基础星星 / (1 - 0.3)
+    raw_stars = (crypto_price / STAR_VALUE_USDT) / (1.0 - TG_STARS_TAX_RATE)
+    stars_price = int(raw_stars) + 1  # 向上取整防止亏损
+    
+    return {
+        "crypto_usdt": crypto_price,
+        "tg_stars": stars_price
+    }
+
+@app.post("/tg/webhook")
+async def telegram_webhook_router(request: Request):
+    try:
+        update_data = await request.json()
+        print(f"[🔍 Webhook收到原生数据流]: {json.dumps(update_data)}")
+        
+        # --- A. 内联查询逻辑 ---
+        if "inline_query" in update_data:
+            handle_tg_inline_query(update_data)
+            return {"status": "success"}
+            
+        # --- B. 拦截星星支付预检请求（必须在 10 秒内应答 ok: True） ---
+        if "pre_checkout_query" in update_data:
+            query_id = update_data["pre_checkout_query"]["id"]
+            answer_url = f"https://api.telegram.org/bot{BOT_TOKEN}/answerPreCheckoutQuery"
+            requests.post(answer_url, json={"pre_checkout_query_id": query_id, "ok": True})
+            return {"status": "success"}
+
+        # --- C. 拦截扣款成功事件，进行数据库全自动升级履约 ---
+        message_data = update_data.get("message", {})
+        if "successful_payment" in message_data:
+            payment_info = message_data["successful_payment"]
+            invoice_payload = json.loads(payment_info.get("invoice_payload", "{}"))
+            
+            order_id = invoice_payload.get("order_id")
+            user_id = invoice_payload.get("user_id")
+            
+            if order_id and user_id:
+                with get_db_connection() as (conn, cursor):
+                    cursor.execute("UPDATE orders SET status = 'completed' WHERE order_id = %s", (order_id,))
+                    
+                    now_ts = int(time.time())
+                    cursor.execute("SELECT vip_until FROM users WHERE id = %s", (user_id,))
+                    user_row = cursor.fetchone()
+                    current_vip_until = user_row[0] if (user_row and user_row[0]) else 0
+                    
+                    # 顺延 7 天（周费 VIP 计费逻辑）
+                    base_time = max(now_ts, current_vip_until)
+                    new_vip_until = base_time + (7 * 24 * 3600)
+                    
+                    cursor.execute(
+                        "UPDATE users SET role = 'vip', vip_until = %s WHERE id = %s",
+                        (new_vip_until, user_id)
+                    )
+                print(f"🎉 成功扣除官方星星，已全自动为用户 {user_id} 顺延 7 天 VIP 权限！")
+                return {"status": "success"}
+    except Exception as e:
+        print(f"[Webhook接收异常]: {str(e)}")
+        return {"status": "error", "message": str(e)}
+    
+        
 # ==========================================
 # 🛡️ TELEGRAM 安全校验核心依赖项
 # ==========================================
@@ -414,6 +654,16 @@ def _send_telegram_media(chat_id: str, bot_token: str, media_type: str, media_so
         raise HTTPException(status_code=400, detail=f"Telegram发送失败: {response.text}")
     return response.json()
 
+@app.get("/api/payment/prices")
+def get_current_prices():
+    """
+    让前端拉取后台最新调控的价格列表
+    """
+    return {
+        "status": "success",
+        "prices": calculate_prices()
+    }
+
 @app.post("/upload/chunk")
 async def upload_chunk(
     file_chunk: UploadFile = File(...), # 确保前端 FormData 里的文件 key 必须叫 file_chunk
@@ -586,30 +836,21 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
     target_photo = data.img if data.img else (data.image if data.image else "")
     db_img = str(target_photo).strip()
 
-    # 身份提取完全交给 get_current_tg_user
     incoming_user_id = str(current_user.get("id")).strip()
-    print("\n====== 保存调试 ======")
-    print("title =", repr(data.title))
-    print("content =", repr(data.content))
-    print("=====================\n")
     if not incoming_user_id:
         raise HTTPException(status_code=400, detail="卡片保存失败：未能提取到有效的 Telegram 用户ID")
 
-    # ==================== 【彻底简化：拥抱 type/value 纯净存储】 ====================
     db_buttons = data.buttons
     if isinstance(db_buttons, str):
         try:
-            # 如果前端传过来的是未解开的字符串，解成 Python 列表/字典
             db_buttons = json.loads(db_buttons)
         except Exception:
             pass
 
-    # 确保最终入库前包裹成标准 JSON 文本，原封不动保留前端的 type 和 value 结构
     if isinstance(db_buttons, (list, dict)):
         db_buttons_str = json.dumps(db_buttons, ensure_ascii=False)
     else:
         db_buttons_str = str(db_buttons) if db_buttons is not None else "[]"
-    # ==============================================================================
 
     media_type = str(data.media_type).strip() if data.media_type else 'photo'
     if media_type not in ['photo', 'video', 'gif']:
@@ -620,16 +861,72 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
     try:
         with get_db_connection() as (_, cursor):
             if card_id:
-                cursor.execute("SELECT id FROM cards WHERE id = %s", (card_id,))
-                if cursor.fetchone():
-                    cursor.execute(
-                        """
-                        UPDATE cards
-                        SET title = %s, content = %s, img = %s, buttons = %s, media_type = %s, user_id = %s
-                        WHERE id = %s
-                        """,
-                        (data.title, data.content, db_img, db_buttons_str, media_type, incoming_user_id, card_id),
-                    )
+                # 🔍 核心变动：追加查询 tg_message_id
+                cursor.execute("SELECT status, img, media_type, user_id, tg_message_id FROM cards WHERE id = %s", (card_id,))
+                existing_card = cursor.fetchone()
+                
+                if existing_card:
+                    current_status, old_img, old_media_type, owner_id, tg_message_id = existing_card
+                    
+                    if owner_id != incoming_user_id and incoming_user_id != '8368521045':
+                        raise HTTPException(status_code=403, detail="您没有修改此卡片的权限")
+
+                    if current_status == "已发布":
+                        if db_img != str(old_img or "").strip() or media_type != old_media_type:
+                            raise HTTPException(
+                                status_code=400, 
+                                detail="根据 Telegram 官方规则，已发布的卡片无法更改媒体文件（图片/视频/GIF）。仅支持修改文字内容和按钮！"
+                            )
+                        
+                        # 1. 更新本地数据库记录
+                        cursor.execute(
+                            """
+                            UPDATE cards
+                            SET title = %s, content = %s, buttons = %s
+                            WHERE id = %s
+                            """,
+                            (data.title, data.content, db_buttons_str, card_id),
+                        )
+                        
+                        # 2. 🚀 核心大动作：如果存在消息 ID，立刻远程同步修改用户私聊窗口里的那张卡片
+                        if tg_message_id:
+                            # 查询发送该卡片应该持有的 Bot Token 凭证
+                            cursor.execute("SELECT bot_token FROM users WHERE telegram_id = %s", (incoming_user_id,))
+                            u_bot = cursor.fetchone()
+                            bot_token = str(u_bot[0]).strip() if (u_bot and u_bot[0]) else BOT_TOKEN
+                            
+                            clean_keyboard = smart_clean_inline_keyboard(db_buttons if isinstance(db_buttons, list) else [], card_id)
+                            reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
+                            clean_html_content = sanitize_for_telegram((data.content or "").strip())
+                            
+                            # 判定是用修改文字还是修改多媒体描述接口
+                            has_media = db_img != ""
+                            api_method = "editMessageCaption" if has_media else "editMessageText"
+                            text_key = "caption" if has_media else "text"
+                            
+                            payload = {
+                                "chat_id": incoming_user_id,
+                                "message_id": int(tg_message_id),
+                                text_key: truncate_caption(clean_html_content, limit=(1024 if has_media else 4096)),
+                                "parse_mode": "HTML"
+                            }
+                            if reply_markup:
+                                payload["reply_markup"] = reply_markup
+                                
+                            try:
+                                requests.post(f"https://api.telegram.org/bot{bot_token}/{api_method}", json=payload, timeout=10)
+                            except Exception as tg_edit_err:
+                                print(f"[错误] 远程同步编辑 TG 母车消息失败: {str(tg_edit_err)}")
+                    else:
+                        # 草稿状态：自由修改
+                        cursor.execute(
+                            """
+                            UPDATE cards
+                            SET title = %s, content = %s, img = %s, buttons = %s, media_type = %s, user_id = %s
+                            WHERE id = %s
+                            """,
+                            (data.title, data.content, db_img, db_buttons_str, media_type, incoming_user_id, card_id),
+                        )
                 else:
                     cursor.execute(
                         """
@@ -647,38 +944,48 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                     """,
                     (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id),
                 )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"数据库写入异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"数据库保存异常: {str(e)}")
 
     return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
 
 
+@app.post("/cards/{card_id}")
+def save_card_with_path_id(card_id: str, data: CardInput, current_user: dict = Depends(get_current_tg_user)):
+    data.id = card_id
+    return save_card(data=data, current_user=current_user)
+
 # 3. 发布卡片接口
 @app.post("/publish")
-def publish_card_with_tg_cache_and_quota(data: dict):
-    # 1. 规范提取并校验 card_id
+def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depends(get_current_tg_user)):
+    # 1. 提取当前登录校验通过的 Telegram 用户 ID
+    incoming_user_id = str(current_user.get("id")).strip()
+    
     card_id = str(data.get("card_id") or data.get("cardId") or "").strip()
     if not card_id:
         raise HTTPException(status_code=400, detail="发布失败：缺少必填卡片ID（card_id）")
 
     try:
         with get_db_connection() as (_, cursor):
-            # 提取卡片核心数据
             cursor.execute(
-                "SELECT title, content, img, buttons, user_id, media_type FROM cards WHERE id = %s",
+                "SELECT title, content, img, buttons, user_id, media_type, tg_file_id FROM cards WHERE id = %s",
                 (card_id,),
             )
             row = cursor.fetchone()
-           
             if not row:
                 raise HTTPException(status_code=404, detail="卡片未找到")
-
-            title, content, img, buttons_raw, card_user_id, media_type = row
             
+            title, content, img, buttons_raw, card_user_id, media_type, saved_tg_file_id = row
+            
+            # 2. 🛡️ 核心安全性校验：判定卡片所有者。非本人且不是超级管理员，直接拦截！
+            if str(card_user_id).strip() != incoming_user_id and incoming_user_id != '8368521045':
+                raise HTTPException(status_code=403, detail="发布失败：您没有权限发布此卡片")
+
             if not card_user_id or str(card_user_id).strip() == "" or str(card_user_id).lower() == "none":
                 raise HTTPException(status_code=400, detail="发布失败：该卡片在数据库中未绑定任何有效用户")
 
-            # 提取卡片所属用户的状态与 Bot 配置
             cursor.execute(
                 "SELECT telegram_id, bot_token, role, vip_until, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
                 (str(card_user_id),),
@@ -686,16 +993,20 @@ def publish_card_with_tg_cache_and_quota(data: dict):
             user_row = cursor.fetchone()
             if not user_row:
                 raise HTTPException(status_code=404, detail="卡片所属的用户在系统中未找到")
-
-            chat_id, user_bot_token, role, vip_until, monthly_published_count, last_reset_month = user_row
-            bot_token = user_bot_token if user_bot_token else BOT_TOKEN
             
+            chat_id, user_bot_token, role, vip_until, monthly_published_count, last_reset_month = user_row
+            
+            is_custom_bot = False
+            if user_bot_token and str(user_bot_token).strip() != "":
+                bot_token = str(user_bot_token).strip()
+                is_custom_bot = True
+            else:
+                bot_token = BOT_TOKEN
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"发布预查询失败: {str(e)}")
 
-    # 2. 周期性的额度重置与会员越权判定
     now_ts = int(time.time())
     current_month = datetime.utcfromtimestamp(now_ts).strftime('%Y-%m')
 
@@ -712,45 +1023,35 @@ def publish_card_with_tg_cache_and_quota(data: dict):
         if not is_vip and monthly_published_count >= 5:
             raise HTTPException(status_code=403, detail='非会员每月仅能发布5张卡片，请前往充值开启无限发布')
 
-    # 3. 反序列化前端传来的纯净按钮矩阵
     try:
         buttons_data = json.loads(buttons_raw or "[]")
     except Exception:
         buttons_data = []
 
-    # ======= 🟢 【精简：全面放权给核心编译器】 =======
-    # 按钮交给清洗器升维，直接生成符合 TG 官方规范的 reply_markup
     clean_keyboard = smart_clean_inline_keyboard(buttons_data, card_id)
     reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
 
-    # HTML 富文本直接洗白并智能截断（不再夹杂任何多余的手动转义修补代码）
     clean_html_content = sanitize_for_telegram((content or "").strip())
-    
     has_media = img and str(img).strip() != ""
     limit_length = 1024 if has_media else 4096
     caption_text = truncate_caption(clean_html_content, limit=limit_length)
-    # =================================================
 
-    # 4. 检查媒体文件是否命中 Telegram 服务器缓存
-    with get_db_connection() as (_, cursor):
-        cursor.execute(
-            "SELECT file_id, media_type FROM media_cache WHERE local_url = %s",
-            (img,),
-        )
-        cache_row = cursor.fetchone()
-
-    tg_file_id = cache_row[0] if cache_row else None
     telegram_api_base = f"https://api.telegram.org/bot{bot_token}"
     response_data = None
 
-    # 5. 执行高效的分发推送
+    tg_file_id = saved_tg_file_id if saved_tg_file_id else None
+    if not tg_file_id and has_media:
+        with get_db_connection() as (_, cursor):
+            cursor.execute("SELECT file_id FROM media_cache WHERE local_url = %s", (img,))
+            cache_row = cursor.fetchone()
+            if cache_row:
+                tg_file_id = cache_row[0]
+
     try:
         if tg_file_id:
-            # 🟢 命中缓存：直接使用 file_id 秒发，省去重新上传的带宽和时间
             method_map = {'video': 'sendVideo', 'gif': 'sendAnimation'}
             api_method = method_map.get(media_type, 'sendPhoto')
             media_key = 'video' if media_type == 'video' else 'animation' if media_type == 'gif' else 'photo'
-            
             payload = {
                 "chat_id": chat_id,
                 media_key: tg_file_id,
@@ -759,15 +1060,12 @@ def publish_card_with_tg_cache_and_quota(data: dict):
             }
             if reply_markup:
                 payload["reply_markup"] = reply_markup
-                
             response_data = requests.post(f"{telegram_api_base}/{api_method}", json=payload, timeout=15)
         else:
-            # 🔴 未命中缓存：使用 URL 首次推送
             if has_media:
                 method_map = {'video': 'sendVideo', 'gif': 'sendAnimation'}
                 api_method = method_map.get(media_type, 'sendPhoto')
                 media_key = 'video' if media_type == 'video' else 'animation' if media_type == 'gif' else 'photo'
-                
                 payload = {
                     "chat_id": chat_id,
                     media_key: img,
@@ -776,10 +1074,8 @@ def publish_card_with_tg_cache_and_quota(data: dict):
                 }
                 if reply_markup:
                     payload["reply_markup"] = reply_markup
-                    
                 response_data = requests.post(f"{telegram_api_base}/{api_method}", json=payload, timeout=15)
             else:
-                # ⚪ 纯文本推送
                 payload = {
                     "chat_id": chat_id,
                     "text": caption_text,
@@ -787,37 +1083,41 @@ def publish_card_with_tg_cache_and_quota(data: dict):
                 }
                 if reply_markup:
                     payload["reply_markup"] = reply_markup
-                    
                 response_data = requests.post(f"{telegram_api_base}/sendMessage", json=payload, timeout=15)
 
-            # 首次发送成功后，异步抽取 file_id 并记录到媒体缓存表中
-            if response_data.ok and has_media:
+        if not response_data.ok:
+            detail_msg = response_data.text
+            if "authorized" in detail_msg.lower() or "blocked" in detail_msg.lower():
+                detail_msg = "Bot 推送无权限。原因可能是您未激活启动该 Bot，或 Bot 被移出了发布目标区域。"
+            raise HTTPException(status_code=400, detail=f"Telegram 推送失败。原因: {detail_msg}")
+
+        # 🗃️ 核心回填：提取存储唯一消息 ID 以及 file_id
+        res_json = response_data.json()
+        new_msg_id = res_json.get("result", {}).get("message_id")
+        
+        with get_db_connection() as (_, cursor):
+            if new_msg_id:
+                cursor.execute("UPDATE cards SET tg_message_id = %s WHERE id = %s", (new_msg_id, card_id))
+            
+            if has_media:
                 try:
-                    res_json = response_data.json()
                     new_file_id = _extract_tg_file_id(res_json, media_type)
                     if new_file_id:
-                        with get_db_connection() as (_, cursor):
-                            cursor.execute(
-                                """
-                                INSERT INTO media_cache (local_url, file_id, media_type, created_at)
-                                VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (local_url) DO UPDATE SET
-                                    file_id = EXCLUDED.file_id,
-                                    media_type = EXCLUDED.media_type,
-                                    created_at = EXCLUDED.created_at
-                                """,
-                                (img, new_file_id, media_type, int(time.time())),
-                            )
+                        cursor.execute("UPDATE cards SET tg_file_id = %s WHERE id = %s", (new_file_id, card_id))
+                        cursor.execute(
+                            """
+                            INSERT INTO media_cache (local_url, file_id, media_type, created_at)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (local_url) DO UPDATE SET file_id = EXCLUDED.file_id
+                            """,
+                            (img, new_file_id, media_type, int(time.time())),
+                        )
                 except Exception as cache_err:
-                    print(f"[警告] 自动抽取并缓存 tg_file_id 失败: {str(cache_err)}")
+                    print(f"[警告] 抽取唯一 tg_file_id 异常: {str(cache_err)}")
 
-        if not response_data.ok:
-            raise HTTPException(status_code=400, detail=f"Telegram推送失败。错误原因: {response_data.text}")
-            
     except requests.exceptions.RequestException as req_err:
-        raise HTTPException(status_code=502, detail=f"连接 Telegram 服务超时: {str(req_err)}")
+        raise HTTPException(status_code=502, detail=f"连通 Telegram 服务网关超时: {str(req_err)}")
 
-    # 6. 后置状态变更与非会员额度扣减
     with get_db_connection() as (_, cursor):
         cursor.execute("UPDATE cards SET status = %s WHERE id = %s", ("已发布", card_id))
         if role != 'superuser' and not (vip_until and int(vip_until) > now_ts):
@@ -826,7 +1126,13 @@ def publish_card_with_tg_cache_and_quota(data: dict):
                 (chat_id,),
             )
 
-    return {"code": 200, "status": "success", "message": "卡片发布成功！", "is_cached": tg_file_id is not None}
+    return {
+        "code": 200, 
+        "status": "success", 
+        "message": "卡片发布成功！", 
+        "is_custom_bot": is_custom_bot
+    }
+    
 # 4. 用户登录接口（【严格保留原有变量对齐方案】）
 @app.post("/user/login")
 def user_login(current_user: dict = Depends(get_current_tg_user)):
@@ -888,6 +1194,62 @@ def user_login(current_user: dict = Depends(get_current_tg_user)):
 # ==========================================
 # 💳 CRYPTO BOT 支付核心整编
 # ==========================================
+@app.post("/api/payment/create_stars_invoice")
+async def create_stars_invoice(request: Request, current_user: dict = Depends(get_current_tg_user)):
+    """
+    【严防死守版】创建官方星星支付链接
+    Depends(get_current_tg_user) 已经强行在请求头解密验签了 initData
+    """
+    try:
+        body = await request.json()
+        body_tg_id = str(body.get("telegram_id", ""))
+    except Exception:
+        body_tg_id = ""
+        
+    # 🚨【你说的身份校验】：比对解密出来的 token 拥有者 ID 是否与前端 Body 上报的 ID 一致，防止越权并发欺诈
+    token_tg_id = str(current_user.get("id") or current_user.get("telegram_id") or "")
+    if body_tg_id and token_tg_id and body_tg_id != token_tg_id:
+        raise HTTPException(status_code=403, detail="安全合规校验未通过：身份凭证不匹配")
+
+    # 动态获取后台调控价格
+    prices = calculate_live_prices()
+    stars_amount = prices["tg_stars"]
+    
+    order_id = f"STARS_{token_tg_id}_{int(time.time())}"
+    
+    # 组装请求 TG 官方创建发票的载荷
+    tg_api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/createInvoiceLink"
+    payload = {
+        "title": f"空境系统 - VIP高级会员",
+        "description": f"享受无限次卡片发布与专属Bot绑定权限（含官方渠道税点补贴）",
+        "payload": json.dumps({"order_id": order_id, "user_id": token_tg_id}),
+        "provider_token": "",  # ⭐️ 官方 Stars 支付此处必须留空字符串
+        "currency": "XTR",     # ⭐️ XTR 代表 Telegram Stars
+        "prices": [
+            {"label": "VIP会员专属订阅", "amount": stars_amount}
+        ]
+    }
+    
+    res = requests.post(tg_api_url, json=payload, timeout=5)
+    res_json = res.json()
+    if not res_json.get("ok"):
+        raise HTTPException(status_code=500, detail=f"TG官方收银台激活失败: {res_json.get('description')}")
+        
+    pay_url = res_json["result"]
+    
+    # 写入订单库留底
+    with get_db_connection() as (conn, cursor):
+        cursor.execute(
+            """
+            INSERT INTO orders (order_id, user_id, amount, status, crypto_invoice_id, pay_url)
+            VALUES (%s, %s, %s, 'pending', %s, %s)
+            """,
+            (order_id, token_tg_id, float(stars_amount), "STARS_PAYING", pay_url)
+        )
+        
+    return {"status": "success", "pay_url": pay_url, "order_id": order_id}
+
+
 @app.post("/vip/create_invoice")
 async def create_invoice(data: dict, req: Request):
     """

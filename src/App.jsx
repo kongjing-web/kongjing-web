@@ -520,102 +520,175 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
 }
 
 function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
+  // 后台控制的动态多通道价格状态
+  const [livePrices, setLivePrices] = useState({ crypto_usdt: 2.0, tg_stars: 143 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [payUrl, setPayUrl] = useState(null);
 
-  const handleCreateInvoice = async () => {
-  // 优先从 TG 容器获取用户 ID
+  // 优先从 TG 容器获取当前用户的真实 Telegram 唯一 ID
   const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
-  // 如果容器拿不到，再从你现有的 currentUser 状态里拿
-  const userId = tgUser?.id || currentUser?.id;
+  const userId = tgUser?.id || currentUser?.id || currentUser?.telegram_id;
 
-  if (!userId) {
-    alert('未检测到您的 Telegram 账号信息，请在 TG 客户端内重新打开小程序');
-    return;
-  }
-
-  setLoading(true);
-  setError(null);
-  try {
-    const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
-      method: 'POST',
-      headers: getAuthHeaders('application/json'), // 保持原有的安全头
-      body: JSON.stringify({ 
-        telegram_id: String(userId) // 🚀【关键】：双保险，Body 里也传一份明文 ID 供后端降级使用
-      })
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || '创建发票失败');
-    }
-    
-    const data = await response.json();
-    const openUrl = data.pay_url || data.url || data.payment_url; 
-    
-    if (openUrl) {
-      if (window.Telegram?.WebApp?.openTelegramLink) {
-        window.Telegram.WebApp.openTelegramLink(openUrl);
-      } else if (window.Telegram?.WebApp?.openLink) {
-        window.Telegram.WebApp.openLink(openUrl);
-      } else {
-        window.open(openUrl, '_blank');
+  // 页面初始化时，自动去后端拉取最新由你调控控制的价格
+  useEffect(() => {
+    async function fetchPrices() {
+      try {
+        const res = await fetch(`${BASE_URL}/payment/prices`, {
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.prices) setLivePrices(data.prices);
+        }
+      } catch (err) {
+        console.error("拉取后台控制定价失败，降级使用标准预设价格", err);
       }
-    } else {
-      alert("未获取到有效的支付跳转链接，请检查后端 Crypto 凭证。");
     }
-    
+    fetchPrices();
+  }, []);
+
+  // 通道一：你原本的 Crypto Bot（USDT）支付网关触发器
+  const handleCryptoPay = async () => {
+    if (!userId) {
+      alert('未检测到您的 Telegram 账号信息，请在 TG 客户端内重新打开小程序');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
+        method: 'POST',
+        headers: getAuthHeaders('application/json'),
+        body: JSON.stringify({ telegram_id: String(userId) }) // 你的高级身份防御双保险
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || '创建 Crypto 发票失败');
+      }
+      
+      const data = await response.json();
+      const openUrl = data.pay_url || data.url || data.payment_url; 
+      
+      if (openUrl) {
+        if (window.Telegram?.WebApp?.openTelegramLink) {
+          window.Telegram.WebApp.openTelegramLink(openUrl);
+        } else {
+          window.open(openUrl, '_blank');
+        }
+        // 轮询同步权益
+        triggerPolling();
+      }
+    } catch (err) {
+      alert(err.message || '网络连接异常');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 通道二：核心新增 —— 官方 Stars 原生高安全级收银台
+  const handleStarsPay = async () => {
+    if (!userId) {
+      alert('未检测到您的 Telegram 账号信息，请重新在 TG 内加载');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      // 强力校验：既走 getAuthHeaders 密文，又在 body 丢明文 ID 供后端强力交叉审计
+      const response = await fetch(`${BASE_URL}/api/payment/create_stars_invoice`, {
+        method: 'POST',
+        headers: getAuthHeaders('application/json'),
+        body: JSON.stringify({ telegram_id: String(userId) })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || '创建官方发票失败');
+      }
+      
+      const data = await response.json();
+      if (data.status === 'success' && data.pay_url) {
+        // ⭐ 原生大招：调用 TG 内置底层 API，唤起无需跳转的精致指纹支付弹窗
+        window.Telegram?.WebApp?.openInvoice(data.pay_url, function(status) {
+          if (status === 'paid') {
+            alert("🎉 恭喜！您已成功通过官方星星完成订阅，VIP 权限已全自动秒级到账！");
+            if (onRefreshUser) onRefreshUser();
+            onBack();
+          } else if (status === 'cancelled') {
+            alert("💡 支付已取消");
+          } else {
+            alert("⚠️ 支付失败，请检查您的 Stars 账户余额。");
+          }
+        });
+      }
+    } catch (err) {
+      alert(err.message || 'Stars 收银台连接故障');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 你原本的轮询复用逻辑
+  const triggerPolling = () => {
     if (onRefreshUser) {
       let attempts = 0;
       const intervalId = setInterval(async () => {
         attempts += 1;
         await onRefreshUser();
-        if (attempts >= 15) {
-          clearInterval(intervalId);
-        }
+        if (attempts >= 15) clearInterval(intervalId);
       }, 5000);
     }
-  } catch (err) {
-    console.error('创建发票请求失败:', err);
-    alert(err.message || '网络连接异常');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
       <div className="sticky top-0 w-full bg-white border-b border-gray-100 px-4 py-3 z-40 shadow-sm flex items-center justify-between">
         <button onClick={onBack} className="text-sm font-bold text-gray-700">← 返回</button>
-        <span className="text-sm font-bold text-gray-800">会员充值</span>
+        <span className="text-sm font-bold text-gray-800">多通道智能充值中心</span>
         <div className="w-8" />
       </div>
       <div className="p-4 space-y-4">
         <div className="bg-white rounded-3xl border border-gray-200 p-5 shadow-sm">
-          <h2 className="text-lg font-bold text-gray-900">2美元/周 VIP</h2>
-          <p className="mt-3 text-sm text-gray-500 leading-6">开通后可绑定专属 Bot，解除非会员每月 5 张卡片发布限制，享受无限发布权限。</p>
+          <h2 className="text-lg font-bold text-gray-900">VIP 会员专属权限</h2>
+          <p className="mt-3 text-sm text-gray-500 leading-6">开通后可绑定专属 Bot，解除非会员每月限制，享受无限原生裂变卡片发布权限。</p >
           <ul className="mt-4 space-y-3 text-sm text-gray-600">
-            <li>• 自定义专属 Bot</li>
-            <li>• 无限次卡片发布</li>
-            <li>• 专属 VIP 计费与优惠</li>
+            <li>• 自定义多租户独立专属 Bot</li>
+            <li>• 无限次高级裂变卡片发布</li>
+            <li>• 高级全维度柱状数据透视面板</li>
           </ul>
+          
           {currentUser && (
             <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
-              当前用户：{currentUser.username || currentUser.telegram_id} / {currentUser.role === 'superuser' ? '超级管理员' : '普通用户'}
+              当前用户：{currentUser.username || currentUser.telegram_id} / {currentUser.role === 'vip' ? '👑 VIP会员' : '普通用户'}
             </div>
           )}
+          
           {error && <div className="mt-4 text-sm text-red-500">{error}</div>}
+
+          {/* 通道一：Crypto 支付按钮 */}
           <button
-            onClick={handleCreateInvoice}
+            onClick={handleCryptoPay}
             disabled={loading}
-            className="mt-6 w-full rounded-2xl bg-amber-500 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-amber-300"
+            className="mt-6 w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-blue-700 disabled:bg-blue-300 flex justify-between items-center"
           >
-            {loading ? '生成支付链接...' : '立即用 USDT 支付'}
+            <span>{loading ? '正在处理...' : '立即用 Crypto Bot 支付'}</span>
+            <span className="bg-blue-700 px-2.5 py-0.5 rounded-lg text-xs font-black">{livePrices.crypto_usdt} USDT</span>
           </button>
-          {payUrl && (
-            <div className="mt-4 text-sm text-gray-600">已生成支付链接，若未自动打开请重新点击“立即用 USDT 支付”。</div>
-          )}
+
+          {/* 通道二：官方 Stars 支付按钮（自动计算并包含了30%溢价） */}
+          <button
+            onClick={handleStarsPay}
+            disabled={loading}
+            className="mt-3 w-full rounded-2xl bg-amber-500 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-amber-600 disabled:bg-amber-300 flex justify-between items-center"
+          >
+            <span>{loading ? '激活收银台...' : 'Telegram 官方原生支付'}</span>
+            <span className="bg-amber-600 px-2.5 py-0.5 rounded-lg text-xs font-black">⭐️ {livePrices.tg_stars} Stars</span>
+          </button>
+
+          <p className="text-[11px] text-center text-gray-400 mt-4 font-medium">
+            * 官方原生通道已包含苹果/安卓商店 30% 平台抽成税点补贴
+          </p >
         </div>
       </div>
     </div>
