@@ -596,7 +596,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
     setError(null);
     try {
       // 强力校验：既走 getAuthHeaders 密文，又在 body 丢明文 ID 供后端强力交叉审计
-      const response = await fetch(`${BASE_URL}/api/payment/create_stars_invoice`, {
+      const response = await fetch(`${BASE_URL}/payment/create_stars_invoice`, {
         method: 'POST',
         headers: getAuthHeaders('application/json'),
         body: JSON.stringify({ telegram_id: String(userId) })
