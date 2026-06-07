@@ -562,6 +562,9 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
     }
 
 
+def get_current_user(current_user: dict = Depends(get_current_tg_user)) -> dict:
+    return current_user
+
 # ==========================================
 # 管理员权限专用依赖
 # ==========================================
@@ -971,6 +974,9 @@ class UpdateSettingsInput(BaseModel):
     user_id: Any
     bot_token: Optional[str] = None
     language: Optional[str] = None
+
+class SetLanguageInput(BaseModel):
+    language: str
 
 class AdminUpdateVipInput(BaseModel):
     telegram_id: str
@@ -1387,6 +1393,10 @@ def user_login(current_user: dict = Depends(get_current_tg_user)):
             }
 
     return user
+
+@app.get("/api/user")
+def api_get_current_user(current_user: dict = Depends(get_current_user)):
+    return current_user
 
 # ==========================================
 # 管理员专用接口
@@ -1901,6 +1911,20 @@ async def update_settings(data: UpdateSettingsInput):
         "monthly_published_count": row[7],
         "last_reset_month": row[8],
     }
+
+@app.post("/api/user/set-language")
+def api_set_language(data: SetLanguageInput, current_user: dict = Depends(get_current_user)):
+    language = str(data.language or '').strip().lower()
+    if language not in ['zh', 'en']:
+        language = 'zh'
+    telegram_id = str(current_user.get('telegram_id') or current_user.get('id') or '').strip()
+    if not telegram_id:
+        raise HTTPException(status_code=403, detail='无法识别当前用户')
+    with get_db_connection() as (_, cursor):
+        cursor.execute("UPDATE users SET language = %s WHERE telegram_id = %s", (language, telegram_id))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail='用户不存在')
+    return {"message": "语言偏好已保存", "language": language}
 
 @app.get("/cards/{card_id}")
 def get_card(card_id: str):

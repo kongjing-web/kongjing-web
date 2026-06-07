@@ -31,6 +31,95 @@ const getAuthHeaders = (contentType = null) => {
   return headers;
 };
 
+const TRANSLATIONS = {
+  zh: {
+    app_title: '空境系统',
+    console_version: 'Console v1.2',
+    admin_banner_title: '空境系统管理后台已开启',
+    admin_banner_label: '管理员专用',
+    admin_dashboard: '进入后台',
+    choose_card_type: '选择卡片类型',
+    home_card_mode: '原生卡片模式',
+    home_card_mode_desc: '创建 Telegram 原生卡片',
+    my_cards: '我的卡片',
+    all_cards_count: '全部',
+    no_cards: '暂无卡片数据，点击上方“原生卡片模式”创建一张吧',
+    preview: '预览',
+    publish: '发布',
+    analytics: '数据',
+    edit: '修改',
+    delete: '删除',
+    settings: '设置',
+    account_settings: '账号设置',
+    account_settings_desc: '在此处绑定您的专属 Bot，并选择界面语言。',
+    bot_token_label: 'Bot 密钥设置',
+    bot_token_placeholder: '请输入专属 Bot Token',
+    language_label: '语言设置',
+    save_settings: '保存设置',
+    saving: '保存中...',
+    save_success: '设置已保存',
+    vip_only_bot: '仅限会员使用专属Bot',
+    current_bot_bound: '当前绑定 Bot：',
+    announcement_tag: '公告',
+    vip_member_privileges: 'VIP 会员专属权限',
+    vip_member_desc: '开通后可绑定专属 Bot，解除非会员每月限制，享受无限原生裂变卡片发布权限。',
+    recharge_button_crypto: '立即用 Crypto Bot 支付',
+    recharge_button_stars: 'Telegram 官方原生支付',
+    pay_processing: '正在处理...',
+    view_history: '系统公告',
+    back: '← 返回',
+    anonymous_user: '匿名用户',
+    monthly_limit_remained: '月剩余额度',
+    admin_only_note: '仅限管理员访问。前端页面伪造无法绕过后端 `verify_admin` 权限校验。',
+    system_announcement: '系统公告',
+    language_chinese: '中文',
+    language_english: 'English',
+  },
+  en: {
+    app_title: 'KongJing System',
+    console_version: 'Console v1.2',
+    admin_banner_title: 'Admin Dashboard Enabled',
+    admin_banner_label: 'Admin Only',
+    admin_dashboard: 'Admin Dashboard',
+    choose_card_type: 'Choose Card Type',
+    home_card_mode: 'Native Card Mode',
+    home_card_mode_desc: 'Create Telegram native cards',
+    my_cards: 'My Cards',
+    all_cards_count: 'All',
+    no_cards: 'No cards yet. Click the above “Native Card Mode” to create one.',
+    preview: 'Preview',
+    publish: 'Publish',
+    analytics: 'Analytics',
+    edit: 'Edit',
+    delete: 'Delete',
+    settings: 'Settings',
+    account_settings: 'Account Settings',
+    account_settings_desc: 'Bind your dedicated bot here and choose UI language.',
+    bot_token_label: 'Bot Token',
+    bot_token_placeholder: 'Enter your dedicated Bot Token',
+    language_label: 'Language',
+    save_settings: 'Save Settings',
+    saving: 'Saving...',
+    save_success: 'Settings saved',
+    vip_only_bot: 'Dedicated bot setup available for VIP members only',
+    current_bot_bound: 'Current bound bot: ',
+    announcement_tag: 'Notice',
+    vip_member_privileges: 'VIP Member Privileges',
+    vip_member_desc: 'Unlock dedicated bot binding, remove monthly limits, and publish unlimited native viral cards.',
+    recharge_button_crypto: 'Pay with Crypto Bot',
+    recharge_button_stars: 'Telegram Native Payment',
+    pay_processing: 'Processing...',
+    view_history: 'System Announcement',
+    back: '← Back',
+    anonymous_user: 'Anonymous User',
+    monthly_limit_remained: 'Monthly Limit Remained',
+    admin_only_note: 'Admin access only. The backend verify_admin check cannot be bypassed by front-end spoofing.',
+    system_announcement: 'System Announcement',
+    language_chinese: '中文',
+    language_english: 'English',
+  }
+};
+
 // 统计上报（公开接口，无需鉴权）
 const trackView = async (cardId) => {
   try {
@@ -57,6 +146,9 @@ export default function App() {
   const [cards, setCards] = useState([]);
   // 当前 Telegram 登录用户信息
   const [currentUser, setCurrentUser] = useState(null);
+  const [lang, setLang] = useState('zh');
+  const t = (key) => TRANSLATIONS[lang]?.[key] || key;
+
   // 全局加载状态
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -87,18 +179,34 @@ export default function App() {
       window.Telegram?.WebApp?.ready();
     }
   }, []); // 确保这段检查只在页面第一次打开时执行一次
-  const refreshCurrentUser = async () => {
-    if (!currentUser?.id) return;
-    setRefreshingUser(true);
+  const fetchUserData = async () => {
     try {
       const response = await fetch(`${BASE_URL}/user/login`, {
         method: 'POST',
         headers: getAuthHeaders('application/json'),
         body: JSON.stringify({}),
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        throw new Error('用户登录失败');
+      }
       const userInfo = await response.json();
       setCurrentUser(userInfo);
+      setLang(userInfo.language || 'zh');
+      return userInfo;
+    } catch (err) {
+      console.error('获取用户信息失败:', err);
+      throw err;
+    }
+  };
+
+  const refreshCurrentUser = async () => {
+    if (!currentUser?.id) return;
+    setRefreshingUser(true);
+    try {
+      const userInfo = await fetchUserData();
+      if (userInfo) {
+        setCurrentUser(userInfo);
+      }
     } catch (err) {
       console.error('刷新用户信息失败:', err);
     } finally {
@@ -177,23 +285,13 @@ export default function App() {
           }
         }
 
-        if (!telegramUser?.id) {
+            if (!telegramUser?.id) {
           setCurrentUser({ id: '123456789', username: '浏览器测试用户', role: 'user' });
           return;
         }
 
-        const response = await fetch(`${BASE_URL}/user/login`, {
-          method: 'POST',
-          headers: getAuthHeaders('application/json'),
-          body: JSON.stringify({}),
-        });
-
-        if (!response.ok) {
-          throw new Error('用户登录失败');
-        }
-
-        const userInfo = await response.json();
-        if (!cancelled) {
+        const userInfo = await fetchUserData();
+        if (!cancelled && userInfo) {
           setCurrentUser(userInfo);
         }
       } catch (err) {
@@ -305,6 +403,20 @@ export default function App() {
           setCards={setCards}
           fetchCards={fetchCards}
           currentUser={currentUser}
+          currentLang={lang}
+          t={t}
+          onChangeLanguage={async (newLang) => {
+            setLang(newLang);
+            try {
+              await fetch(`${BASE_URL}/api/user/set-language`, {
+                method: 'POST',
+                headers: getAuthHeaders('application/json'),
+                body: JSON.stringify({ language: newLang }),
+              });
+            } catch (err) {
+              console.error('更新语言偏好失败:', err);
+            }
+          }}
           announcement={announcement}
           onNavigateEditor={() => { setSelectedCard(null); setCurrentScreen('editor'); }} 
           onNavigateEditSpecific={(card) => { setSelectedCard(card); setCurrentScreen('editor'); }}
@@ -323,7 +435,8 @@ export default function App() {
         <SettingsScreen
           currentUser={currentUser}
           onBack={() => setCurrentScreen('home')}
-          onSave={(userInfo) => { setCurrentUser(userInfo); setCurrentScreen('home'); }}
+          onSave={(userInfo) => { setCurrentUser(userInfo); setLang(userInfo.language || 'zh'); setCurrentScreen('home'); }}
+          t={t}
         />
       )}
       {currentScreen === 'admin' && (
@@ -744,7 +857,7 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
 /* ==========================================================================
    1. 首页组件 (HomeScreen)
    ========================================================================== */
-function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
+function HomeScreen({ cards, setCards, fetchCards, currentUser, currentLang, t, onChangeLanguage, announcement, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
@@ -875,18 +988,33 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             </div>
           )}
         </div>
-        <div className="text-right"><span className="text-[10px] bg-slate-100 font-bold text-slate-500 px-2 py-1 rounded-md">Console v1.2</span></div>
+        <div className="text-right"><span className="text-[10px] bg-slate-100 font-bold text-slate-500 px-2 py-1 rounded-md">{t('console_version')}</span></div>
       </div>
       {/* 注：已将下方冗余的用户信息卡片移除，相关显示已整合至顶部 Header */}
+
+      <div className="mx-4 mt-3 flex items-center gap-2">
+        <button
+          onClick={() => onChangeLanguage('zh')}
+          className={`rounded-full border px-3 py-2 text-xs font-semibold transition ${currentLang === 'zh' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+        >
+          {t('language_chinese')}
+        </button>
+        <button
+          onClick={() => onChangeLanguage('en')}
+          className={`rounded-full border px-3 py-2 text-xs font-semibold transition ${currentLang === 'en' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+        >
+          {t('language_english')}
+        </button>
+      </div>
 
       {announcement && (
         <div className="mx-4 mt-3 rounded-2xl border border-amber-300/30 bg-gradient-to-r from-amber-100/80 to-amber-50 p-3 text-sm text-amber-900 flex items-start gap-3">
           <FaBell className="text-amber-700 mt-1" />
           <div className="flex-1">
-            <div className="font-bold">系统公告</div>
+            <div className="font-bold">{t('system_announcement')}</div>
             <div className="text-xs mt-1">{announcement}</div>
           </div>
-          <div className="text-xs text-amber-800 font-semibold">公告</div>
+          <div className="text-xs text-amber-800 font-semibold">{t('announcement_tag')}</div>
         </div>
       )}
 
@@ -894,39 +1022,39 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
         <div className="mx-4 mt-4 rounded-3xl border border-amber-400/40 bg-gradient-to-r from-amber-100/80 via-yellow-50 to-slate-50 p-4 shadow-lg shadow-amber-200/30">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">管理员专用</p>
-              <p className="mt-1 text-sm font-bold text-slate-900">空境系统管理后台已开启</p>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">{t('admin_banner_label')}</p>
+              <p className="mt-1 text-sm font-bold text-slate-900">{t('admin_banner_title')}</p>
             </div>
             <button
               onClick={onNavigateAdmin}
               className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.15em] text-amber-200 shadow-lg shadow-slate-900/10 hover:bg-slate-800 transition"
             >
-              <FaLock size={14} /> 进入后台
+              <FaLock size={14} /> {t('admin_dashboard')}
             </button>
           </div>
-          <p className="mt-3 text-[11px] text-slate-500">仅限管理员访问。前端页面伪造无法绕过后端 `verify_admin` 权限校验。</p>
+          <p className="mt-3 text-[11px] text-slate-500">{t('admin_only_note')}</p>
         </div>
       )}
 
       <div className="p-4 pb-12">
-        <p className="text-[11px] text-gray-400 mt-2 mb-3 font-bold uppercase tracking-widest">选择卡片类型</p >
+        <p className="text-[11px] text-gray-400 mt-2 mb-3 font-bold uppercase tracking-widest">{t('choose_card_type')}</p >
         <div className="flex flex-col gap-3 cursor-pointer" onClick={onNavigateEditor}>
           <div className="flex items-center p-4 bg-white border-2 border-blue-500 rounded-2xl gap-4 shadow-sm active:scale-[0.99] transition-all">
             <div className="bg-blue-600 p-3 rounded-xl text-white shadow-md"><FaLayerGroup size={20} /></div>
             <div>
-              <p className="font-bold text-sm">原生卡片模式</p >
-              <p className="text-xs text-gray-400">创建 Telegram 原生卡片</p >
+              <p className="font-bold text-sm">{t('home_card_mode')}</p >
+              <p className="text-xs text-gray-400">{t('home_card_mode_desc')}</p >
             </div>
           </div>
         </div>
 
         <div className="flex items-center justify-between mt-8 mb-4">
-          <h2 className="font-bold text-gray-800 text-lg">我的卡片</h2>
-          <span className="text-xs text-gray-400 font-bold px-2 py-1 bg-gray-100 rounded-lg">全部 {cards.length}</span>
+          <h2 className="font-bold text-gray-800 text-lg">{t('my_cards')}</h2>
+          <span className="text-xs text-gray-400 font-bold px-2 py-1 bg-gray-100 rounded-lg">{t('all_cards_count')} {cards.length}</span>
         </div>
 
         {cards.length === 0 ? (
-          <div className="text-center py-12 text-xs text-gray-400">暂无卡片数据，点击上方“原生卡片模式”创建一张吧</div>
+          <div className="text-center py-12 text-xs text-gray-400">{t('no_cards')}</div>
         ) : (
           <div className="flex flex-col gap-3">
             {cards.map((card) => {
@@ -951,19 +1079,19 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
                   <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
                     <button onClick={() => onNavigatePreview(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                      <FaEye size={11} className="text-gray-400" /> 预览
+                      <FaEye size={11} className="text-gray-400" /> {t('preview')}
                     </button>
                     <button onClick={() => handlePublishToTelegram(card)} className="flex-1 text-center text-[11px] font-bold text-blue-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-blue-50/50 active:scale-95 transition-transform">
-                      <FaPaperPlane size={10} className="text-blue-400" /> 发布
+                      <FaPaperPlane size={10} className="text-blue-400" /> {t('publish')}
                     </button>
                     <button onClick={() => onNavigateAnalytics(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                      <FaChartBar size={11} className="text-gray-400" /> 数据
+                      <FaChartBar size={11} className="text-gray-400" /> {t('analytics')}
                     </button>
                     <button onClick={() => onNavigateEditSpecific(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                      <FaEdit size={11} className="text-gray-400" /> 修改
+                      <FaEdit size={11} className="text-gray-400" /> {t('edit')}
                     </button>
                     <button onClick={() => handleDeleteCard(card.id)} className="flex-1 text-center text-[11px] font-bold text-red-500 flex items-center justify-center gap-1 hover:bg-red-50/40">
-                      <FaTrashAlt size={11} className="text-red-400" /> 删除
+                      <FaTrashAlt size={11} className="text-red-400" /> {t('delete')}
                     </button>
                   </div>
                 </div>
@@ -1152,7 +1280,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   );
 }
 
-function SettingsScreen({ currentUser, onBack, onSave }) {
+function SettingsScreen({ currentUser, onBack, onSave, t }) {
   const [botToken, setBotToken] = useState(currentUser?.bot_token || '');
   const [language, setLanguage] = useState(currentUser?.language || 'zh');
   const [saving, setSaving] = useState(false);
@@ -1188,7 +1316,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
         throw new Error(text || '保存设置失败');
       }
       const result = await response.json();
-      setMessage('设置已保存');
+      setMessage(t('save_success'));
       onSave(result);
     } catch (err) {
       console.error('保存设置失败:', err);
@@ -1201,36 +1329,36 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
       <div className="sticky top-0 w-full bg-white border-b border-gray-100 px-4 py-3 z-40 shadow-sm flex items-center justify-between">
-        <button onClick={onBack} className="text-sm font-bold text-gray-700">← 返回</button>
-        <span className="text-sm font-bold text-gray-800">设置</span>
+        <button onClick={onBack} className="text-sm font-bold text-gray-700">{t('back')}</button>
+        <span className="text-sm font-bold text-gray-800">{t('settings')}</span>
         <div className="w-8" />
       </div>
       <div className="p-4 space-y-4">
         <div className="bg-white rounded-3xl border border-gray-200 p-5 shadow-sm">
-          <h2 className="text-lg font-bold text-gray-900">账号设置</h2>
-          <p className="mt-2 text-sm text-gray-500">在此处绑定您的专属 Bot，并选择界面语言。</p>
+          <h2 className="text-lg font-bold text-gray-900">{t('account_settings')}</h2>
+          <p className="mt-2 text-sm text-gray-500">{t('account_settings_desc')}</p>
 
           <div className="mt-6 space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-2">Bot 密钥设置</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-2">{t('bot_token_label')}</label>
               <input
                 type="text"
                 value={botToken}
                 onChange={(e) => setBotToken(e.target.value)}
                 disabled={botInputDisabled}
                 className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100"
-                placeholder="请输入专属 Bot Token"
+                placeholder={t('bot_token_placeholder')}
               />
               {!isVip && (
-                <p className="mt-2 text-xs text-red-500">仅限会员使用专属Bot</p>
+                <p className="mt-2 text-xs text-red-500">{t('vip_only_bot')}</p>
               )}
               {currentUser?.bot_username && (
-                <p className="mt-2 text-xs text-slate-500">当前绑定 Bot：@{currentUser.bot_username}</p>
+                <p className="mt-2 text-xs text-slate-500">{t('current_bot_bound')}@{currentUser.bot_username}</p>
               )}
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-2">语言设置</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-2">{t('language_label')}</label>
               <select
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
@@ -1249,7 +1377,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
             disabled={saving}
             className="mt-6 w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
           >
-            {saving ? '保存中...' : '保存设置'}
+            {saving ? t('saving') : t('save_settings')}
           </button>
         </div>
       </div>
