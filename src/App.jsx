@@ -44,6 +44,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshingUser, setRefreshingUser] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
   useEffect(() => {
     // A. 判断是否是本地开发调试环境 (支持 localhost 和本地 IP)
     const isLocalhost = 
@@ -192,6 +193,22 @@ export default function App() {
     };
   }, []);
 
+  // 拉取全局公告（公开接口，无需身份）
+  const fetchAnnouncement = async () => {
+    try {
+      const resp = await fetch(`${BASE_URL}/announcement`, { headers: getAuthHeaders() });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      setAnnouncement(data.announcement || '');
+    } catch (e) {
+      console.warn('获取公告失败', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchAnnouncement();
+  }, []);
+
   useEffect(() => {
     if (currentUser?.id) {
       fetchCards();
@@ -271,6 +288,7 @@ export default function App() {
           setCards={setCards}
           fetchCards={fetchCards}
           currentUser={currentUser}
+          announcement={announcement}
           onNavigateEditor={() => { setSelectedCard(null); setCurrentScreen('editor'); }} 
           onNavigateEditSpecific={(card) => { setSelectedCard(card); setCurrentScreen('editor'); }}
           onNavigatePreview={(card) => { setSelectedCard(card); setCurrentScreen('preview'); }}
@@ -295,6 +313,7 @@ export default function App() {
         <AdminDashboard
           currentUser={currentUser}
           onBack={() => setCurrentScreen('home')}
+          onAnnouncementChange={(val) => { setAnnouncement(val); }}
         />
       )}
       
@@ -323,7 +342,7 @@ export default function App() {
   );
 }
 
-function AdminDashboard({ currentUser, onBack }) {
+function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
   const [activeTab, setActiveTab] = useState('users');
   const [dashboard, setDashboard] = useState({ total_users: 0, total_cards: 0, total_views: 0, total_clicks: 0 });
   const [users, setUsers] = useState([]);
@@ -483,12 +502,49 @@ function AdminDashboard({ currentUser, onBack }) {
     }
   };
 
-  const handlePublishAnnouncement = () => {
+  const handlePublishAnnouncement = async () => {
     if (!announcement.trim()) {
       return alert('请输入公告内容');
     }
-    alert('全局公告已发布：' + announcement.trim());
-    setAnnouncement('');
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${BASE_URL}/admin/announcement`, {
+        method: 'POST',
+        headers: getAuthHeaders('application/json'),
+        body: JSON.stringify({ announcement: announcement.trim() }),
+      });
+      if (!response.ok) throw new Error('发布公告失败');
+      const data = await response.json();
+      alert(data.message || '公告已发布');
+      setAnnouncement('');
+      if (typeof onAnnouncementChange === 'function') onAnnouncementChange(data.announcement || announcement.trim());
+    } catch (err) {
+      console.error('发布公告失败', err);
+      alert('发布公告失败，请检查权限或网络');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleClearAnnouncement = async () => {
+    if (!window.confirm('确认要清除当前全局公告吗？')) return;
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${BASE_URL}/admin/announcement`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) throw new Error('清除公告失败');
+      const data = await response.json();
+      alert(data.message || '公告已清除');
+      if (typeof onAnnouncementChange === 'function') onAnnouncementChange('');
+      setAnnouncement('');
+    } catch (err) {
+      console.error('清除公告失败', err);
+      alert('清除公告失败，请检查权限或网络');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   useEffect(() => {
@@ -601,16 +657,41 @@ function AdminDashboard({ currentUser, onBack }) {
                 const isBanned = card.status === 'banned';
                 return (
                   <div key={card.id} className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-inner shadow-slate-950/20">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="space-y-1">
-                        <div className="text-sm font-semibold text-white">{card.title || '未命名卡片'}</div>
-                        <div className="text-xs text-slate-400">卡片 ID: {card.id}</div>
-                        <div className="text-xs text-slate-400">创建者: {card.user_id || '未知'}</div>
-                        <div className="text-xs text-slate-400">状态: <span className={`font-semibold ${isBanned ? 'text-rose-400' : 'text-emerald-300'}`}>{isBanned ? '已下架' : '正常'}</span></div>
+                    <div className="flex gap-4">
+                      {card.img ? (
+                        <img src={card.img} alt="thumb" className="w-28 h-20 object-cover rounded-xl bg-slate-700" />
+                      ) : (
+                        <div className="w-28 h-20 bg-slate-800 rounded-xl flex items-center justify-center text-xs text-slate-400">无图片</div>
+                      )}
+                      <div className="flex-1">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="text-sm font-semibold text-white">{card.title || '未命名卡片'}</div>
+                            <div className="text-xs text-slate-400 mt-1 line-clamp-3" dangerouslySetInnerHTML={{ __html: (card.content || '').slice(0, 300) }} />
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              {(card.buttons || []).map((b, i) => (
+                                <span key={i} className="text-xs px-2 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">{(b && (b.text || b.label)) || JSON.stringify(b)}</span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="text-right text-xs text-slate-400">
+                            <div>ID: {card.id}</div>
+                            <div>作者: {card.user_id || '未知'}</div>
+                            <div className={`mt-1 font-semibold ${isBanned ? 'text-rose-400' : 'text-emerald-300'}`}>{isBanned ? '已下架' : '正常'}</div>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between">
+                          <div className="text-xs text-slate-400 flex items-center gap-3">
+                            <span className="inline-flex items-center gap-1"><FaEye className="text-slate-500" /> {card.views ?? 0}</span>
+                            <span className="inline-flex items-center gap-1"><FaMousePointer className="text-slate-500" /> {card.clicks ?? 0}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => handleToggleCardStatus(card.id)} disabled={submitting} className={`rounded-2xl px-3 py-2 text-xs font-semibold transition ${isBanned ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400' : 'bg-rose-500 text-white hover:bg-rose-400'}`}>
+                              {isBanned ? '恢复卡片' : '下架卡片'}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      <button onClick={() => handleToggleCardStatus(card.id)} disabled={submitting} className={`rounded-2xl px-3 py-2 text-xs font-semibold transition ${isBanned ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400' : 'bg-rose-500 text-white hover:bg-rose-400'}`}>
-                        {isBanned ? '恢复卡片' : '下架卡片'}
-                      </button>
                     </div>
                   </div>
                 );
@@ -645,7 +726,7 @@ function AdminDashboard({ currentUser, onBack }) {
 /* ==========================================================================
    1. 首页组件 (HomeScreen)
    ========================================================================== */
-function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
+function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
@@ -779,6 +860,17 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, onNavigateEditor
         <div className="text-right"><span className="text-[10px] bg-slate-100 font-bold text-slate-500 px-2 py-1 rounded-md">Console v1.2</span></div>
       </div>
       {/* 注：已将下方冗余的用户信息卡片移除，相关显示已整合至顶部 Header */}
+
+      {announcement && (
+        <div className="mx-4 mt-3 rounded-2xl border border-amber-300/30 bg-gradient-to-r from-amber-100/80 to-amber-50 p-3 text-sm text-amber-900 flex items-start gap-3">
+          <FaBell className="text-amber-700 mt-1" />
+          <div className="flex-1">
+            <div className="font-bold">系统公告</div>
+            <div className="text-xs mt-1">{announcement}</div>
+          </div>
+          <div className="text-xs text-amber-800 font-semibold">公告</div>
+        </div>
+      )}
 
       {isAdmin && (
         <div className="mx-4 mt-4 rounded-3xl border border-amber-400/40 bg-gradient-to-r from-amber-100/80 via-yellow-50 to-slate-50 p-4 shadow-lg shadow-amber-200/30">
