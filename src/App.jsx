@@ -11,7 +11,6 @@ import {
   FaCoins, FaBell, FaBookOpen, FaHeadset, FaPaperPlane,
   FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock
 } from "react-icons/fa";
-import { translations } from './i18n';
 
 // ==========================================================================
 // 后端配置中心
@@ -58,8 +57,6 @@ export default function App() {
   const [cards, setCards] = useState([]);
   // 当前 Telegram 登录用户信息
   const [currentUser, setCurrentUser] = useState(null);
-  const [language, setLanguage] = useState('zh');
-  const t = (key) => translations[language]?.[key] || translations['zh']?.[key] || key;
   // 全局加载状态
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -77,16 +74,16 @@ export default function App() {
 
     // C. 拦截逻辑：既没有 TG 环境，又不是本地开发，说明是外网别人乱入，直接弹窗并强制关闭
     if (!tgInitData && !isLocalhost) {
-      alert(t('alert_auth_failed'));
+      alert("⚠️ 认证失败：请在 Telegram 手机或电脑客户端内打开此小程序！");
       window.Telegram?.WebApp?.close();
       return; // 这里的退出不会破坏 React 的底层 Hook 顺序了，因为 hooks 已经在上面声明完了
     }
 
     // D. 如果通过了拦截，打印一下当前环境日志，方便你调试
     if (isLocalhost && !tgInitData) {
-      console.log(t('console_local_debug'));
+      console.log("🛠️ 当前为【本地调试环境】，自动放行并分发 123456789 测试账号。");
     } else {
-      console.log(t('console_production_ready'));
+      console.log("🚀 当前为【Telegram 生产环境】，成功获取 initData，准备与后端安全通信。");
       window.Telegram?.WebApp?.ready();
     }
   }, []); // 确保这段检查只在页面第一次打开时执行一次
@@ -102,11 +99,8 @@ export default function App() {
       if (!response.ok) return;
       const userInfo = await response.json();
       setCurrentUser(userInfo);
-      if (userInfo?.language) {
-        setLanguage(userInfo.language);
-      }
     } catch (err) {
-      console.error(t('error_refresh_user_failed'), err);
+      console.error('刷新用户信息失败:', err);
     } finally {
       setRefreshingUser(false);
     }
@@ -120,10 +114,10 @@ export default function App() {
         const response = await fetch(`${BASE_URL}/cards`, {
           headers: getAuthHeaders(),
         });
-        if (!response.ok) throw new Error(t('error_network_response'));
+        if (!response.ok) throw new Error('网络响应异常');
         const data = await response.json();
 
-        console.log(t('debug_backend_list_data'), data); // 打印出来看底细
+        console.log("后端返回的原始列表数据是:", data); // 打印出来看底细
 
         // 🚀 终极防御：如果后端返回的是嵌套双重数组 [[...]]，直接帮它脱掉外壳！
         let finalData = data;
@@ -142,8 +136,8 @@ export default function App() {
             setCards([]);
         }
     } catch (err) {
-        console.error(t('error_fetch_data_reason'), err);
-        setError(t('error_no_card_data'));
+        console.error("数据抓取失败原因:", err);
+        setError('连接服务中或暂无卡片数据');
     } finally {
         setLoading(false);
     }
@@ -174,12 +168,12 @@ export default function App() {
           try {
             tg.ready?.();
           } catch (err) {
-            console.warn(t('warn_telegram_ready_failed'), err);
+            console.warn('Telegram ready() 调用失败', err);
           }
           try {
             tg.expand?.();
           } catch (err) {
-            console.warn(t('warn_telegram_expand_failed'), err);
+            console.warn('Telegram expand() 调用失败', err);
           }
         }
 
@@ -195,18 +189,15 @@ export default function App() {
         });
 
         if (!response.ok) {
-          throw new Error(t('error_user_login_failed'));
+          throw new Error('用户登录失败');
         }
 
         const userInfo = await response.json();
         if (!cancelled) {
           setCurrentUser(userInfo);
-          if (userInfo?.language) {
-            setLanguage(userInfo.language);
-          }
         }
       } catch (err) {
-        console.error(t('error_telegram_login_failed'), err);
+        console.error('Telegram 登录失败:', err);
         if (!cancelled) {
           setCurrentUser({ id: '123456789', username: '浏览器测试用户', role: 'user' });
         }
@@ -227,7 +218,7 @@ export default function App() {
       const data = await resp.json();
       setAnnouncement(data.announcement || '');
     } catch (e) {
-      console.warn(t('error_fetch_announcement_failed'), e);
+      console.warn('获取公告失败', e);
     }
   };
 
@@ -274,7 +265,7 @@ export default function App() {
         try {
             await response.json();
         } catch (e) {
-            console.log(t('warn_nonstandard_json_ignored'), e);
+            console.log("后端返回了非标准JSON（比如'OK'），已自动忽略并继续：", e);
         }
 
         // 完美衔接：去刷新列表，并退回首页
@@ -282,12 +273,12 @@ export default function App() {
         setCurrentScreen('home');
         setSelectedCard(null);
       } else {
-        throw new Error(t('error_server_response'));
+        throw new Error('服务器响应异常');
       }
 
     } catch (error) {
-      console.error(t('error_request_failed'), error);
-      alert(t('alert_server_connection_failed_local_update'));
+      console.error("请求失败:", error);
+      alert("连接服务器失败，已为您在本地临时更新。");
       
       // 容错降轨：万一服务器彻底断开，本地临时充数
       if (!cardData.id) {
@@ -315,7 +306,6 @@ export default function App() {
           fetchCards={fetchCards}
           currentUser={currentUser}
           announcement={announcement}
-          t={t}
           onNavigateEditor={() => { setSelectedCard(null); setCurrentScreen('editor'); }} 
           onNavigateEditSpecific={(card) => { setSelectedCard(card); setCurrentScreen('editor'); }}
           onNavigatePreview={(card) => { setSelectedCard(card); setCurrentScreen('preview'); }}
@@ -327,23 +317,18 @@ export default function App() {
       )}
 
       {currentScreen === 'recharge' && (
-        <RechargeScreen currentUser={currentUser} t={t} onBack={() => setCurrentScreen('home')} onRefreshUser={refreshCurrentUser} />
+        <RechargeScreen currentUser={currentUser} onBack={() => setCurrentScreen('home')} onRefreshUser={refreshCurrentUser} />
       )}
       {currentScreen === 'settings' && (
         <SettingsScreen
           currentUser={currentUser}
-          language={language}
-          setLanguage={setLanguage}
-          setAppLanguage={setLanguage}
-          t={t}
           onBack={() => setCurrentScreen('home')}
-          onSave={(userInfo) => { setCurrentUser(userInfo); if (userInfo?.language) setLanguage(userInfo.language); setCurrentScreen('home'); }}
+          onSave={(userInfo) => { setCurrentUser(userInfo); setCurrentScreen('home'); }}
         />
       )}
       {currentScreen === 'admin' && (
         <AdminDashboard
           currentUser={currentUser}
-          t={t}
           onBack={() => setCurrentScreen('home')}
           onAnnouncementChange={(val) => { setAnnouncement(val); }}
         />
@@ -352,7 +337,6 @@ export default function App() {
       {currentScreen === 'editor' && (
         <EditorScreen 
           cardToEdit={selectedCard}
-          t={t}
           onBack={() => { setSelectedCard(null); setCurrentScreen('home'); }} 
           onPublish={handleSaveCard} 
         />
@@ -361,7 +345,6 @@ export default function App() {
       {currentScreen === 'preview' && (
         <PreviewScreen 
           card={selectedCard} 
-          t={t}
           onBack={() => { setSelectedCard(null); setCurrentScreen('home'); }} 
         />
       )}
@@ -369,7 +352,6 @@ export default function App() {
       {currentScreen === 'analytics' && (
         <AnalyticsScreen 
           card={selectedCard} 
-          t={t}
           onBack={() => { setSelectedCard(null); setCurrentScreen('home'); }} 
         />
       )}
@@ -377,7 +359,7 @@ export default function App() {
   );
 }
 
-function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
+function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
   const [activeTab, setActiveTab] = useState('users');
   const [dashboard, setDashboard] = useState({ total_users: 0, total_cards: 0, total_views: 0, total_clicks: 0 });
   const [users, setUsers] = useState([]);
@@ -395,13 +377,13 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
         headers: getAuthHeaders(),
       });
       if (!response.ok) {
-        throw new Error(t('error_permission_or_network'));
+        throw new Error('权限不足或网络异常');
       }
       const data = await response.json();
       setDashboard(data);
     } catch (error) {
-      console.error(t('error_load_admin_panel_failed'), error);
-      alert(t('alert_admin_panel_load_failed'));
+      console.error('加载管理面板失败:', error);
+      alert('无法加载管理面板，请检查管理员权限。');
       onBack();
     } finally {
       setLoading(false);
@@ -415,14 +397,14 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
         headers: getAuthHeaders(),
       });
       if (!response.ok) {
-        throw new Error(t('error_fetch_user_list_failed'));
+        throw new Error('获取用户列表失败');
       }
       const data = await response.json();
       setUsers(Array.isArray(data) ? data : data.data || []);
       setUserPage(page);
     } catch (error) {
-      console.error(t('error_fetch_user_failed'), error);
-      alert(t('alert_fetch_user_list_retry'));
+      console.error('获取用户失败:', error);
+      alert('获取用户列表失败，请稍后重试');
     } finally {
       setLoading(false);
     }
@@ -435,14 +417,14 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
         headers: getAuthHeaders(),
       });
       if (!response.ok) {
-        throw new Error(t('error_fetch_card_list_failed'));
+        throw new Error('获取卡片列表失败');
       }
       const data = await response.json();
       setCards(Array.isArray(data) ? data : data.data || []);
       setCardPage(page);
     } catch (error) {
-      console.error(t('error_fetch_card_failed'), error);
-      alert(t('alert_fetch_card_list_retry'));
+      console.error('获取卡片失败:', error);
+      alert('获取卡片列表失败，请稍后重试');
     } finally {
       setLoading(false);
     }
@@ -463,11 +445,11 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
   };
 
   const handleUpdateVip = async (telegram_id) => {
-    const raw = window.prompt(t('prompt_vip_expiry_input'), '');
+    const raw = window.prompt('请输入新的 VIP 过期时间，支持时间戳或 yyyy-mm-dd hh:mm:ss：', '');
     if (!raw) return;
     const vip_until = parseVipValue(raw);
     if (!vip_until) {
-      return alert(t('alert_vip_expiry_format_invalid'));
+      return alert('输入的 VIP 到期时间格式不正确');
     }
 
     setSubmitting(true);
@@ -478,20 +460,20 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
         body: JSON.stringify({ telegram_id, vip_until }),
       });
       if (!response.ok) {
-        throw new Error(t('error_update_vip_failed'));
+        throw new Error('更新 VIP 失败');
       }
-      alert(t('alert_vip_updated'));
+      alert('VIP 到期时间已更新');
       fetchAdminUsers(userPage);
     } catch (error) {
-      console.error(t('error_update_vip_failed'), error);
-      alert(t('alert_update_vip_retry'));
+      console.error('更新 VIP 失败:', error);
+      alert('更新 VIP 失败，请稍后重试');
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleToggleBan = async (telegram_id) => {
-    if (!window.confirm(t('confirm_toggle_user_ban'))) return;
+    if (!window.confirm('确认要切换该用户的封禁状态吗？')) return;
     setSubmitting(true);
     try {
       const response = await fetch(`${BASE_URL}/admin/users/toggle-ban`, {
@@ -500,21 +482,21 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
         body: JSON.stringify({ telegram_id }),
       });
       if (!response.ok) {
-        throw new Error(t('error_toggle_ban_failed'));
+        throw new Error('封禁切换失败');
       }
       const data = await response.json();
-      alert(data.message || t('alert_user_status_updated'));
+      alert(data.message || '用户状态已更新');
       fetchAdminUsers(userPage);
     } catch (error) {
-      console.error(t('error_toggle_ban_failed_colon'), error);
-      alert(t('alert_toggle_ban_retry'));
+      console.error('切换封禁失败:', error);
+      alert('切换封禁失败，请稍后重试');
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleToggleCardStatus = async (card_id) => {
-    if (!window.confirm(t('confirm_toggle_card_status'))) return;
+    if (!window.confirm('确认要切换该卡片的审核状态吗？')) return;
     setSubmitting(true);
     try {
       const response = await fetch(`${BASE_URL}/admin/cards/toggle-status`, {
@@ -523,15 +505,15 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
         body: JSON.stringify({ card_id }),
       });
       if (!response.ok) {
-        throw new Error(t('error_toggle_card_status_failed'));
+        throw new Error('卡片状态切换失败');
       }
       const data = await response.json();
-      alert(data.message || t('alert_card_status_updated'));
+      alert(data.message || '卡片状态已更新');
       fetchAdminCards(cardPage);
       fetchDashboard();
     } catch (error) {
-      console.error(t('error_toggle_card_status_failed_colon'), error);
-      alert(t('alert_toggle_card_status_retry'));
+      console.error('切换卡片状态失败:', error);
+      alert('切换卡片状态失败，请稍后重试');
     } finally {
       setSubmitting(false);
     }
@@ -539,7 +521,7 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
 
   const handlePublishAnnouncement = async () => {
     if (!announcement.trim()) {
-      return alert(t('alert_enter_announcement'));
+      return alert('请输入公告内容');
     }
     setSubmitting(true);
     try {
@@ -548,35 +530,35 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
         headers: getAuthHeaders('application/json'),
         body: JSON.stringify({ announcement: announcement.trim() }),
       });
-      if (!response.ok) throw new Error(t('error_publish_announcement_failed'));
+      if (!response.ok) throw new Error('发布公告失败');
       const data = await response.json();
-      alert(data.message || t('alert_announcement_published'));
+      alert(data.message || '公告已发布');
       setAnnouncement('');
       if (typeof onAnnouncementChange === 'function') onAnnouncementChange(data.announcement || announcement.trim());
     } catch (err) {
-      console.error(t('error_publish_announcement_failed'), err);
-      alert(t('alert_publish_announcement_network_failed'));
+      console.error('发布公告失败', err);
+      alert('发布公告失败，请检查权限或网络');
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleClearAnnouncement = async () => {
-    if (!window.confirm(t('confirm_clear_announcement'))) return;
+    if (!window.confirm('确认要清除当前全局公告吗？')) return;
     setSubmitting(true);
     try {
       const response = await fetch(`${BASE_URL}/admin/announcement`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
       });
-      if (!response.ok) throw new Error(t('error_clear_announcement_failed'));
+      if (!response.ok) throw new Error('清除公告失败');
       const data = await response.json();
-      alert(data.message || t('alert_announcement_cleared'));
+      alert(data.message || '公告已清除');
       if (typeof onAnnouncementChange === 'function') onAnnouncementChange('');
       setAnnouncement('');
     } catch (err) {
-      console.error(t('error_clear_announcement_failed'), err);
-      alert(t('alert_clear_announcement_network_failed'));
+      console.error('清除公告失败', err);
+      alert('清除公告失败，请检查权限或网络');
     } finally {
       setSubmitting(false);
     }
@@ -600,8 +582,8 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
             <FaArrowLeft /> 返回主页
           </button>
           <div className="text-center">
-            <div className="text-xs uppercase tracking-[0.3em] text-amber-300/80">{t('system_name')}</div>
-            <div className="text-xl font-bold text-white">{t('admin_dashboard_title')}</div>
+            <div className="text-xs uppercase tracking-[0.3em] text-amber-300/80">空境系统</div>
+            <div className="text-xl font-bold text-white">全局管理后台</div>
           </div>
           <div className="text-right text-xs text-slate-400">{currentUser?.username || 'Admin'}</div>
         </div>
@@ -629,9 +611,9 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
       <div className="px-4 py-4">
         <div className="flex flex-wrap items-center gap-2">
           {[
-            { key: 'users', label: t('nav_user_management'), icon: <FaUsers /> },
-            { key: 'cards', label: t('nav_content_audit'), icon: <FaClipboardList /> },
-            { key: 'system', label: t('nav_system_settings'), icon: <FaBullhorn /> },
+            { key: 'users', label: '👥 用户管理', icon: <FaUsers /> },
+            { key: 'cards', label: '🃏 内容审计', icon: <FaClipboardList /> },
+            { key: 'system', label: '📢 系统配置', icon: <FaBullhorn /> },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -647,26 +629,26 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
       <div className="px-4 pb-8">
         {activeTab === 'users' && (
           <div className="space-y-4">
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 text-sm text-slate-400">{t('admin_user_management_desc')}</div>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 text-sm text-slate-400">用户管理：展示 telegram_id、用户名、角色、VIP 到期、月剩余额度；支持 VIP 修改与封禁切换。</div>
             <div className="grid gap-3">
               {users.length === 0 ? (
-                <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900/70 p-6 text-center text-slate-500">{t('no_user_data')}</div>
+                <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900/70 p-6 text-center text-slate-500">暂无用户数据</div>
               ) : users.map((user) => {
                 const isBanned = user.role === 'banned';
                 return (
                   <div key={user.telegram_id} className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-inner shadow-slate-950/20">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="space-y-2">
-                        <div className="text-sm font-semibold text-white">{user.username || t('anonymous_user')}</div>
+                        <div className="text-sm font-semibold text-white">{user.username || '匿名用户'}</div>
                         <div className="text-xs text-slate-400">TG ID: {user.telegram_id}</div>
-                        <div className="text-xs text-slate-400">{t('label_role')}: <span className="font-semibold text-amber-300">{user.role}</span></div>
-                        <div className="text-xs text-slate-400">{t('label_vip_expiry')}: <span className="font-semibold text-white">{user.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000) ? new Date(Number(user.vip_until) * 1000).toLocaleString() : t('not_active')}</span></div>
-                        <div className="text-xs text-slate-400">{t('label_monthly_publish_count')}: <span className="font-semibold text-white">{user.monthly_published_count ?? 0}</span></div>
+                        <div className="text-xs text-slate-400">角色: <span className="font-semibold text-amber-300">{user.role}</span></div>
+                        <div className="text-xs text-slate-400">VIP 到期: <span className="font-semibold text-white">{user.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000) ? new Date(Number(user.vip_until) * 1000).toLocaleString() : '未激活'}</span></div>
+                        <div className="text-xs text-slate-400">月发布计数: <span className="font-semibold text-white">{user.monthly_published_count ?? 0}</span></div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <button onClick={() => handleUpdateVip(user.telegram_id)} disabled={submitting} className="rounded-2xl bg-amber-400 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-300 transition">{t('action_modify_vip')}</button>
+                        <button onClick={() => handleUpdateVip(user.telegram_id)} disabled={submitting} className="rounded-2xl bg-amber-400 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-300 transition">修改 VIP</button>
                         <button onClick={() => handleToggleBan(user.telegram_id)} disabled={submitting} className={`rounded-2xl px-3 py-2 text-xs font-semibold transition ${isBanned ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400' : 'bg-rose-500 text-white hover:bg-rose-400'}`}>
-                          {isBanned ? t('unban_user') : t('ban_user')}
+                          {isBanned ? '解封用户' : '封禁用户'}
                         </button>
                       </div>
                     </div>
@@ -675,9 +657,9 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
               })}
             </div>
             <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
-              <button disabled={userPage <= 1 || loading} onClick={() => fetchAdminUsers(userPage - 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">{t('action_prev_page')}</button>
-              <span>{t('page_info')} {userPage} {t('page')}</span>
-              <button disabled={loading} onClick={() => fetchAdminUsers(userPage + 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">{t('action_next_page')}</button>
+              <button disabled={userPage <= 1 || loading} onClick={() => fetchAdminUsers(userPage - 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">上一页</button>
+              <span>第 {userPage} 页</span>
+              <button disabled={loading} onClick={() => fetchAdminUsers(userPage + 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">下一页</button>
             </div>
           </div>
         )}
@@ -687,7 +669,7 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
             <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 text-sm text-slate-400">内容审计：展示卡片 ID、标题、创建者、状态；支持一键下架 / 恢复。</div>
             <div className="grid gap-3">
               {cards.length === 0 ? (
-                <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900/70 p-6 text-center text-slate-500">{t('no_card_records')}</div>
+                <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900/70 p-6 text-center text-slate-500">暂无卡片记录</div>
               ) : cards.map((card) => {
                 const isBanned = card.status === 'banned';
                 return (
@@ -696,12 +678,12 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
                       {card.img ? (
                         <img src={card.img} alt="thumb" className="w-28 h-20 object-cover rounded-xl bg-slate-700" />
                       ) : (
-                        <div className="w-28 h-20 bg-slate-800 rounded-xl flex items-center justify-center text-xs text-slate-400">{t('no_image')}</div>
+                        <div className="w-28 h-20 bg-slate-800 rounded-xl flex items-center justify-center text-xs text-slate-400">无图片</div>
                       )}
                       <div className="flex-1">
                         <div className="flex items-start justify-between">
                           <div>
-                            <div className="text-sm font-semibold text-white">{card.title || t('unnamed_card')}</div>
+                            <div className="text-sm font-semibold text-white">{card.title || '未命名卡片'}</div>
                             <div className="text-xs text-slate-400 mt-1 line-clamp-3" dangerouslySetInnerHTML={{ __html: (card.content || '').slice(0, 300) }} />
                             <div className="mt-2 flex items-center gap-2 flex-wrap">
                               {(card.buttons || []).map((b, i) => (
@@ -711,8 +693,8 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
                           </div>
                           <div className="text-right text-xs text-slate-400">
                             <div>ID: {card.id}</div>
-                            <div>{t('label_author')}: {card.user_id || t('unknown')}</div>
-                            <div className={`mt-1 font-semibold ${isBanned ? 'text-rose-400' : 'text-emerald-300'}`}>{isBanned ? t('card_status_removed') : t('card_status_normal')}</div>
+                            <div>作者: {card.user_id || '未知'}</div>
+                            <div className={`mt-1 font-semibold ${isBanned ? 'text-rose-400' : 'text-emerald-300'}`}>{isBanned ? '已下架' : '正常'}</div>
                           </div>
                         </div>
                         <div className="mt-3 flex items-center justify-between">
@@ -722,7 +704,7 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
                           </div>
                           <div className="flex items-center gap-2">
                             <button onClick={() => handleToggleCardStatus(card.id)} disabled={submitting} className={`rounded-2xl px-3 py-2 text-xs font-semibold transition ${isBanned ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400' : 'bg-rose-500 text-white hover:bg-rose-400'}`}>
-                              {isBanned ? t('restore_card') : t('remove_card')}
+                              {isBanned ? '恢复卡片' : '下架卡片'}
                             </button>
                           </div>
                         </div>
@@ -733,25 +715,25 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
               })}
             </div>
             <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
-              <button disabled={cardPage <= 1 || loading} onClick={() => fetchAdminCards(cardPage - 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">{t('action_prev_page')}</button>
-              <span>{t('page_info')} {cardPage} {t('page')}</span>
-              <button disabled={loading} onClick={() => fetchAdminCards(cardPage + 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">{t('action_next_page')}</button>
+              <button disabled={cardPage <= 1 || loading} onClick={() => fetchAdminCards(cardPage - 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">上一页</button>
+              <span>第 {cardPage} 页</span>
+              <button disabled={loading} onClick={() => fetchAdminCards(cardPage + 1)} className="rounded-xl border border-slate-700 px-3 py-2 hover:bg-slate-800 transition">下一页</button>
             </div>
           </div>
         )}
 
         {activeTab === 'system' && (
           <div className="space-y-4">
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 text-sm text-slate-400">{t('admin_system_config_desc')}</div>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 text-sm text-slate-400">系统配置：发布跑马灯公告，通知全网用户。</div>
             <textarea
               value={announcement}
               onChange={(e) => setAnnouncement(e.target.value)}
               rows={6}
               className="w-full rounded-3xl border border-slate-700 bg-slate-900/80 p-4 text-sm text-slate-100 outline-none focus:border-amber-400"
-              placeholder={t('placeholder_announcement_content')}
+              placeholder="请输入系统跑马灯公告内容..."
             />
-            <button onClick={handlePublishAnnouncement} className="inline-flex items-center gap-2 rounded-3xl bg-amber-400 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-amber-400/20 hover:bg-amber-300 transition">{t('action_publish_announcement')}</button>
-            <button onClick={handleClearAnnouncement} disabled={submitting} className="inline-flex items-center gap-2 rounded-3xl bg-red-500 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-red-600 transition">{t('action_clear_announcement')}</button>
+            <button onClick={handlePublishAnnouncement} className="inline-flex items-center gap-2 rounded-3xl bg-amber-400 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-amber-400/20 hover:bg-amber-300 transition">发布公告</button>
+            <button onClick={handleClearAnnouncement} disabled={submitting} className="inline-flex items-center gap-2 rounded-3xl bg-red-500 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-red-600 transition">清除当前公告</button>
           </div>
         )}
       </div>
@@ -762,16 +744,16 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange, t }) {
 /* ==========================================================================
    1. 首页组件 (HomeScreen)
    ========================================================================== */
-function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin, t }) {
+function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
 
   // 保留原有 currentUser 状态不变，提供兼容的 `user` 别名以满足旧版逻辑引用
   const user = currentUser || null;
-  const wxUsername = user?.username || t('anonymous_user');
-  const wxRole = user ? (user.role === 'superuser' ? t('super_admin') : t('normal_user')) : t('not_logged_in');
-  const vipStatus = user?.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000) ? t('vip_active') : (user ? t('normal_user') : t('not_logged_in'));
+  const wxUsername = user?.username || "匿名用户";
+  const wxRole = user ? (user.role === 'superuser' ? '超级管理员' : '普通用户') : '未登录';
+  const vipStatus = user?.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000) ? 'VIP 有效' : (user ? '普通用户' : '未登录');
 
   // 优先读取 user?.tg_id，其次回退到 Telegram WebApp initDataUnsafe 中的 id
   const telegramInitId = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initDataUnsafe?.user?.id : null;
@@ -784,8 +766,8 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
   // 专属 Bot 状态（保持原变量名判断 user?.has_bot / user?.bot_username）
   const botStatus = isAnonymous
-    ? { text: t('waiting_telegram_auth'), className: 'text-gray-400' }
-    : (user?.has_bot ? { text: `● ${t('bot_bound')} @${user?.bot_username}`, className: 'text-emerald-500' } : { text: t('current_bot_unbound'), className: 'text-amber-500' });
+    ? { text: '正在等待 Telegram 授权登录...', className: 'text-gray-400' }
+    : (user?.has_bot ? { text: `● 已绑定: @${user?.bot_username}`, className: 'text-emerald-500' } : { text: '○ 当前尚未绑定专属bot', className: 'text-amber-500' });
 
   const isAdmin = user?.role === 'admin' || user?.role === 'superuser';
 
@@ -874,21 +856,21 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
           {showUserMenu && (
             <div className="absolute left-0 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                  <button onClick={() => { onNavigateRecharge(); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
-                <FaCoins className="text-amber-500" /> {t('nav_recharge')}
+              <button onClick={() => { onNavigateRecharge(); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
+                <FaCoins className="text-amber-500" /> 充值页面
               </button>
-              <button onClick={() => { alert(t('alert_message_center_closed')); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
-                <FaBell className="text-blue-500" /> {t('nav_message_center')}
+              <button onClick={() => { alert('消息中心暂未开放'); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
+                <FaBell className="text-blue-500" /> 消息中心
               </button>
-              <button onClick={() => { alert(t('alert_check_docs_for_usage')); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
-                <FaBookOpen className="text-purple-500" /> {t('nav_usage_docs')}
+              <button onClick={() => { alert('请查阅开发文档使用说明'); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
+                <FaBookOpen className="text-purple-500" /> 使用说明
               </button>
               <button onClick={() => { onNavigateSettings(); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
-                <FaLayerGroup className="text-indigo-500" /> {t('settings')}
+                <FaLayerGroup className="text-indigo-500" /> 设置
               </button>
               <div className="h-px bg-gray-100 my-1 mx-2"></div>
-              <button onClick={() => { alert(t('alert_calling_support')); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
-                <FaHeadset className="text-emerald-500" /> {t('contact_support')}
+              <button onClick={() => { alert('正在呼叫客服'); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
+                <FaHeadset className="text-emerald-500" /> 联系客服
               </button>
             </div>
           )}
@@ -901,10 +883,10 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
         <div className="mx-4 mt-3 rounded-2xl border border-amber-300/30 bg-gradient-to-r from-amber-100/80 to-amber-50 p-3 text-sm text-amber-900 flex items-start gap-3">
           <FaBell className="text-amber-700 mt-1" />
           <div className="flex-1">
-            <div className="font-bold">{t('system_announcement')}</div>
+            <div className="font-bold">系统公告</div>
             <div className="text-xs mt-1">{announcement}</div>
           </div>
-          <div className="text-xs text-amber-800 font-semibold">{t('announcement')}</div>
+          <div className="text-xs text-amber-800 font-semibold">公告</div>
         </div>
       )}
 
@@ -912,39 +894,39 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
         <div className="mx-4 mt-4 rounded-3xl border border-amber-400/40 bg-gradient-to-r from-amber-100/80 via-yellow-50 to-slate-50 p-4 shadow-lg shadow-amber-200/30">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">{t('admin_only')}</p>
-              <p className="mt-1 text-sm font-bold text-slate-900">{t('admin_console_enabled')}</p>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">管理员专用</p>
+              <p className="mt-1 text-sm font-bold text-slate-900">空境系统管理后台已开启</p>
             </div>
             <button
               onClick={onNavigateAdmin}
               className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.15em] text-amber-200 shadow-lg shadow-slate-900/10 hover:bg-slate-800 transition"
             >
-              <FaLock size={14} /> {t('action_enter_admin')}
+              <FaLock size={14} /> 进入后台
             </button>
           </div>
-          <p className="mt-3 text-[11px] text-slate-500">{t('admin_access_notice')}</p>
+          <p className="mt-3 text-[11px] text-slate-500">仅限管理员访问。前端页面伪造无法绕过后端 `verify_admin` 权限校验。</p>
         </div>
       )}
 
       <div className="p-4 pb-12">
-        <p className="text-[11px] text-gray-400 mt-2 mb-3 font-bold uppercase tracking-widest">{t('label_select_card_type')}</p >
+        <p className="text-[11px] text-gray-400 mt-2 mb-3 font-bold uppercase tracking-widest">选择卡片类型</p >
         <div className="flex flex-col gap-3 cursor-pointer" onClick={onNavigateEditor}>
           <div className="flex items-center p-4 bg-white border-2 border-blue-500 rounded-2xl gap-4 shadow-sm active:scale-[0.99] transition-all">
             <div className="bg-blue-600 p-3 rounded-xl text-white shadow-md"><FaLayerGroup size={20} /></div>
             <div>
-              <p className="font-bold text-sm">{t('native_card_mode')}</p >
-              <p className="text-xs text-gray-400">{t('native_card_description')}</p >
+              <p className="font-bold text-sm">原生卡片模式</p >
+              <p className="text-xs text-gray-400">创建 Telegram 原生卡片</p >
             </div>
           </div>
         </div>
 
         <div className="flex items-center justify-between mt-8 mb-4">
-          <h2 className="font-bold text-gray-800 text-lg">{t('my_cards')}</h2>
-          <span className="text-xs text-gray-400 font-bold px-2 py-1 bg-gray-100 rounded-lg">{t('all_cards')} {cards.length}</span>
+          <h2 className="font-bold text-gray-800 text-lg">我的卡片</h2>
+          <span className="text-xs text-gray-400 font-bold px-2 py-1 bg-gray-100 rounded-lg">全部 {cards.length}</span>
         </div>
 
         {cards.length === 0 ? (
-          <div className="text-center py-12 text-xs text-gray-400">{t('no_cards_prompt')}</div>
+          <div className="text-center py-12 text-xs text-gray-400">暂无卡片数据，点击上方“原生卡片模式”创建一张吧</div>
         ) : (
           <div className="flex flex-col gap-3">
             {cards.map((card) => {
@@ -959,7 +941,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                       : <img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
                     }
                     <div className="flex-1 flex flex-col justify-between py-1">
-                      <p className="font-bold text-sm text-gray-800 line-clamp-2">{card.title || t('unnamed_card')}</p >
+                      <p className="font-bold text-sm text-gray-800 line-clamp-2">{card.title || "未命名卡片"}</p >
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1"><FaEye /> {card.analytics?.views || 0}</span>
                         <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === '已发布' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>{card.status}</span>
@@ -969,19 +951,19 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
                   <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
                     <button onClick={() => onNavigatePreview(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                      <FaEye size={11} className="text-gray-400" /> {t('preview')}
+                      <FaEye size={11} className="text-gray-400" /> 预览
                     </button>
                     <button onClick={() => handlePublishToTelegram(card)} className="flex-1 text-center text-[11px] font-bold text-blue-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-blue-50/50 active:scale-95 transition-transform">
-                      <FaPaperPlane size={10} className="text-blue-400" /> {t('publish')}
+                      <FaPaperPlane size={10} className="text-blue-400" /> 发布
                     </button>
                     <button onClick={() => onNavigateAnalytics(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                      <FaChartBar size={11} className="text-gray-400" /> {t('analytics')}
+                      <FaChartBar size={11} className="text-gray-400" /> 数据
                     </button>
                     <button onClick={() => onNavigateEditSpecific(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
-                      <FaEdit size={11} className="text-gray-400" /> {t('edit')}
+                      <FaEdit size={11} className="text-gray-400" /> 修改
                     </button>
                     <button onClick={() => handleDeleteCard(card.id)} className="flex-1 text-center text-[11px] font-bold text-red-500 flex items-center justify-center gap-1 hover:bg-red-50/40">
-                      <FaTrashAlt size={11} className="text-red-400" /> {t('delete')}
+                      <FaTrashAlt size={11} className="text-red-400" /> 删除
                     </button>
                   </div>
                 </div>
@@ -1170,7 +1152,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   );
 }
 
-function SettingsScreen({ currentUser, onBack, onSave, setLanguage: setAppLanguage, t }) {
+function SettingsScreen({ currentUser, onBack, onSave }) {
   const [botToken, setBotToken] = useState(currentUser?.bot_token || '');
   const [language, setLanguage] = useState(currentUser?.language || 'zh');
   const [saving, setSaving] = useState(false);
@@ -1181,7 +1163,7 @@ function SettingsScreen({ currentUser, onBack, onSave, setLanguage: setAppLangua
 
   const handleSave = async () => {
     if (!currentUser?.id) {
-      alert(t('alert_complete_telegram_login'));
+      alert('请先完成 Telegram 登录');
       return;
     }
     setSaving(true);
@@ -1203,15 +1185,14 @@ function SettingsScreen({ currentUser, onBack, onSave, setLanguage: setAppLangua
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(text || t('error_save_settings_failed'));
+        throw new Error(text || '保存设置失败');
       }
       const result = await response.json();
-      setMessage(t('alert_settings_saved'));
-      setAppLanguage(language);
+      setMessage('设置已保存');
       onSave(result);
     } catch (err) {
-      console.error(t('error_save_settings_failed'), err);
-      setMessage(err.message || t('alert_save_failed'));
+      console.error('保存设置失败:', err);
+      setMessage(err.message || '保存失败');
     } finally {
       setSaving(false);
     }
@@ -1220,43 +1201,43 @@ function SettingsScreen({ currentUser, onBack, onSave, setLanguage: setAppLangua
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
       <div className="sticky top-0 w-full bg-white border-b border-gray-100 px-4 py-3 z-40 shadow-sm flex items-center justify-between">
-        <button onClick={onBack} className="text-sm font-bold text-gray-700">← {t('action_back')}</button>
-        <span className="text-sm font-bold text-gray-800">{t('settings')}</span>
+        <button onClick={onBack} className="text-sm font-bold text-gray-700">← 返回</button>
+        <span className="text-sm font-bold text-gray-800">设置</span>
         <div className="w-8" />
       </div>
       <div className="p-4 space-y-4">
         <div className="bg-white rounded-3xl border border-gray-200 p-5 shadow-sm">
-          <h2 className="text-lg font-bold text-gray-900">{t('account_settings')}</h2>
-          <p className="mt-2 text-sm text-gray-500">{t('settings_description')}</p>
+          <h2 className="text-lg font-bold text-gray-900">账号设置</h2>
+          <p className="mt-2 text-sm text-gray-500">在此处绑定您的专属 Bot，并选择界面语言。</p>
 
           <div className="mt-6 space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-2">{t('label_bot_token_settings')}</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-2">Bot 密钥设置</label>
               <input
                 type="text"
                 value={botToken}
                 onChange={(e) => setBotToken(e.target.value)}
                 disabled={botInputDisabled}
                 className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100"
-                placeholder={t('placeholder_bot_token')}
+                placeholder="请输入专属 Bot Token"
               />
               {!isVip && (
-                <p className="mt-2 text-xs text-red-500">{t('vip_only_bot')}</p>
+                <p className="mt-2 text-xs text-red-500">仅限会员使用专属Bot</p>
               )}
               {currentUser?.bot_username && (
-                <p className="mt-2 text-xs text-slate-500">{t('current_bound_bot')}: @{currentUser.bot_username}</p>
+                <p className="mt-2 text-xs text-slate-500">当前绑定 Bot：@{currentUser.bot_username}</p>
               )}
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-2">{t('label_language_settings')}</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-2">语言设置</label>
               <select
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
                 className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400"
               >
-                <option value="zh">{t('language_zh')}</option>
-                <option value="en">{t('language_en')}</option>
+                <option value="zh">简体中文</option>
+                <option value="en">English</option>
               </select>
             </div>
           </div>
@@ -1268,7 +1249,7 @@ function SettingsScreen({ currentUser, onBack, onSave, setLanguage: setAppLangua
             disabled={saving}
             className="mt-6 w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
           >
-            {saving ? t('status_saving') : t('action_save_settings')}
+            {saving ? '保存中...' : '保存设置'}
           </button>
         </div>
       </div>
@@ -1279,7 +1260,7 @@ function SettingsScreen({ currentUser, onBack, onSave, setLanguage: setAppLangua
 /* ==========================================================================
    2. 原生卡片配置/高级内容编辑器 (EditorScreen)
    ========================================================================== */
-function EditorScreen({ cardToEdit, onBack, onPublish, t }) {
+function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [showMenu, setShowMenu] = useState(false);
   const [menuView, setMenuView] = useState('main'); 
   const [showBtnModal, setShowBtnModal] = useState(false);
@@ -1469,21 +1450,22 @@ function EditorScreen({ cardToEdit, onBack, onPublish, t }) {
     const { from, to } = editor.state.selection;
 
     switch (label) {
-      case 'editor_bold': editor.chain().toggleBold().run(); break;
-      case 'editor_italic': editor.chain().toggleItalic().run(); break;
-      case 'editor_underline': editor.chain().toggleUnderline().run(); break;
-      case 'editor_strikethrough': editor.chain().toggleStrike().run(); break;
-      case 'editor_blockquote': editor.chain().toggleBlockquote().run(); break;
-      case 'editor_copy': editor.chain().focus().toggleCode().run(); break;
-      case 'editor_spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
-      case 'editor_clear_format': editor.chain().unsetAllMarks().clearNodes().run(); break;
-      case 'editor_emoji': setMenuView('emoji'); break;
-      case 'editor_link':
-        if (from === to) { alert(t('alert_select_text_for_link')); return; }
+      case '加粗': editor.chain().toggleBold().run(); break;
+      case '斜体': editor.chain().toggleItalic().run(); break;
+      case '下划线': editor.chain().toggleUnderline().run(); break;
+      case '删除线': editor.chain().toggleStrike().run(); break;
+      case '引用': editor.chain().toggleBlockquote().run(); break;
+      case '一键复制': editor.chain().focus().toggleCode().run(); break;
+      case '防剧透': editor.chain().focus().toggleMark('spoiler').run(); break;
+      case '清除格式': editor.chain().unsetAllMarks().clearNodes().run(); break;
+      case '表情': setMenuView('emoji'); break;
+      case '内嵌链接':
+        if (from === to) { alert('请先在编辑器中选中一段文字，再插入内嵌链接'); return; }
         setMenuView('link'); break;
-      case 'editor_external_link': setMenuView('grid'); break;
-      case 'editor_undo': editor.chain().undo().run(); break;
-      case 'editor_redo': editor.chain().redo().run(); break;
+      case '按钮': setMenuView('grid'); break;
+      case '外部链接': setMenuView('grid'); break;
+      case '撤销': editor.chain().undo().run(); break;
+      case '重做': editor.chain().redo().run(); break;
       default: break;
     }
   };
@@ -1554,8 +1536,8 @@ function EditorScreen({ cardToEdit, onBack, onPublish, t }) {
     <div className="flex flex-col h-screen bg-[#E7EBF0] text-gray-800 max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
         <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
-        <h1 className="text-sm font-bold text-gray-700">{t('editor_native_card_config')}</h1>
-        <button onClick={triggerPublish} className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md active:scale-95 transition-transform">{t('action_save_card')}</button>
+        <h1 className="text-sm font-bold text-gray-700">原生卡片配置</h1>
+        <button onClick={triggerPublish} className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md active:scale-95 transition-transform">保存卡片</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-80">
@@ -1844,13 +1826,8 @@ function AnalyticsScreen({ card, onBack }) {
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm space-y-4">
           <h3 className="text-sm font-bold text-gray-800 border-b pb-2">柱状比率图像统计</h3>
           <div className="space-y-3.5">
-            {[
-              ['chart_views', views, 'bg-blue-500'], 
-              ['chart_shares', shares, 'bg-green-500'], 
-              ['chart_likes', likes, 'bg-red-500'], 
-              ['chart_clicks', clicks, 'bg-purple-500']
-            ].map(([key, val, color]) => (
-              <div key={key} className="space-y-1">
+            {[['浏览量', views, 'bg-blue-500'], ['转发量', shares, 'bg-green-500'], ['点赞量', likes, 'bg-red-500'], ['按钮点击量', clicks, 'bg-purple-500']].map(([label, val, color]) => (
+              <div key={label} className="space-y-1">
                 <div className="flex justify-between text-xs font-medium"><span className="text-gray-500">{label}</span><span className="font-bold text-gray-700">{val}</span></div>
                 <div className="w-full bg-gray-100 h-2.5 rounded-full overflow-hidden">
                   <div className={`${color} h-full rounded-full transition-all duration-500`} style={{ width: `${(val / maxVal) * 100}%` }}></div>
