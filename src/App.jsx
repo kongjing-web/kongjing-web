@@ -12,17 +12,25 @@ import {
   FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock
 } from "react-icons/fa";
 
-import { translations } from './i18n';
+import { useTranslation } from 'react-i18next';
+import './i18n'; 
+
 // ==========================================================================
 // 后端配置中心
 // ==========================================================================
-const BASE_URL = "https://www.kongjing.online/api".replace(/\/+$/, ""); 
+const BASE_URL = "https://www.kongjing.online/api".replace(/\/+$/, ""); // 去除尾部斜杠，避免拼接时出现 //api//user
 
 const getAuthHeaders = (contentType = null) => {
   const headers = {};
-  if (contentType) { headers['Content-Type'] = contentType; }
+  if (contentType) {
+    headers['Content-Type'] = contentType;
+  }
+
   const initData = window.Telegram?.WebApp?.initData || "";
-  if (initData) { headers.Authorization = `Bearer ${initData}`; }
+  if (initData) {
+    headers.Authorization = `Bearer ${initData}`;
+  }
+
   return headers;
 };
 
@@ -44,62 +52,47 @@ const trackClick = async (cardId) => {
 };
 
 export default function App() {
-  const [currentLang, setCurrentLang] = useState(() => {
+  // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings' | 'admin'
+  const { t, i18n } = useTranslation();
   const [currentScreen, setCurrentScreen] = useState('home');
+  // 当前正在被操作的卡片对象
   const [selectedCard, setSelectedCard] = useState(null);
+  // 卡片数据流（初始化为空，从后端动态加载）
   const [cards, setCards] = useState([]);
+  // 当前 Telegram 登录用户信息
   const [currentUser, setCurrentUser] = useState(null);
+  // 全局加载状态
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshingUser, setRefreshingUser] = useState(false);
   const [announcement, setAnnouncement] = useState('');
-  // 🚀 2. 响应式的多语言状态：初始化时，先看后端返回的 user.language，其次看本地缓存，最后默认 'zh'
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('lang') || 'zh';
-    }
-    return 'zh';
-  });
-
-  // 🚀 3. 核心翻译函数 t：你在代码里写的 t('key') 全都由它处理
-  const t = (key) => {
-    if (!translations[currentLang]) {
-      return translations['zh']?.[key] || key;
-    }
-    return translations[currentLang][key] || translations['zh']?.[key] || key;
-  };
-
-  // 🚀 4. 核心切换语言函数：改变状态实现全局刷新，同步本地缓存，并向后端发送请求
-  const changeLanguage = async (lang) => {
-    // a. 立即改变前端状态，触发全局界面文本刷新
-    setCurrentLang(lang);
-    // b. 存入浏览器本地缓存，下次打开不用重复选择
-    localStorage.setItem('lang', lang);
-
-    // c. 通知后端记录语言改变
-    try {
-      await fetch(`${BASE_URL}/user/settings`, { // 💡 请根据你真实的后端更新接口调整此路径
-        method: 'POST',
-        headers: getAuthHeaders('application/json'),
-        body: JSON.stringify({ language: lang }) // 传给后端的字段名
-      });
-      console.log('后端语言状态同步成功:', lang);
-    } catch (err) {
-      console.error('后端语言状态同步失败:', err);
-    }
-  };
-
-  // 🚀 5. 当后端加载完用户信息时，自动校准为后端的语言
+   // 👈 3. 登录成功时，强制让前端 UI 语言服从后端记录的语言
   useEffect(() => {
-    if (currentUser?.language && currentUser.language !== currentLang) {
-      setCurrentLang(currentUser.language);
-      localStorage.setItem('lang', currentUser.language);
+  if (currentUser?.language) {
+    i18n.changeLanguage(currentUser.language);
+  } else {
+    i18n.changeLanguage('en'); // 👈 强力修复：如果没有拿到用户语言，先默认切到中文保底！
+  }
+}, [currentUser, i18n])
+
+  // 👈 4. 手动切换语言的专用处理函数：立刻变前端 UI + 如果登录了就同步给后端
+  const handleLanguageSwitch = async (targetLang) => {
+    i18n.changeLanguage(targetLang); // 改变前端 UI
+
+    if (currentUser) {
+      try {
+        await fetch(`${BASE_URL}/user/update_lang`, {
+          method: 'POST',
+          headers: getAuthHeaders('application/json'),
+          body: JSON.stringify({ language: targetLang })
+        });
+        // 同步更新本地状态，防止发生冲突
+        setCurrentUser(prev => prev ? { ...prev, language: targetLang } : null);
+      } catch (error) {
+        console.error('同步后端语言失败:', error);
+      }
     }
-  }, [currentUser]);
-  // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings' | 'admin'
-  // 当前正在被操作的卡片对象
-  // 卡片数据流（初始化为空，从后端动态加载）
-  // 当前 Telegram 登录用户信息
-  // 全局加载状态
+  };
   useEffect(() => {
     // A. 判断是否是本地开发调试环境 (支持 localhost 和本地 IP)
     const isLocalhost = 
@@ -398,6 +391,7 @@ export default function App() {
 }
 
 function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState('users');
   const [dashboard, setDashboard] = useState({ total_users: 0, total_cards: 0, total_views: 0, total_clicks: 0 });
   const [users, setUsers] = useState([]);
@@ -783,6 +777,7 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
    1. 首页组件 (HomeScreen)
    ========================================================================== */
 function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
+  const { t } = useTranslation();
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
@@ -1016,6 +1011,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 }
 
 function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
+  const { t } = useTranslation();
   // 后台控制的动态多通道价格状态
   const [livePrices, setLivePrices] = useState({ crypto_usdt: 2.0, tg_stars: 143 });
   const [loading, setLoading] = useState(false);
@@ -1189,8 +1185,11 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
 }
 
 function SettingsScreen({ currentUser, onBack, onSave }) {
+  // 👈 1. 引入官方多语言 Hook 实例
+  const { t, i18n } = useTranslation();
+
   const [botToken, setBotToken] = useState(currentUser?.bot_token || '');
-  const [language, setLanguage] = useState(currentUser?.language || 'zh');
+  const [language, setLanguage] = useState(currentUser?.language || 'en'); // 👈 默认强制初始化为 en
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
 
@@ -1199,7 +1198,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
 
   const handleSave = async () => {
     if (!currentUser?.id) {
-      alert('请先完成 Telegram 登录'); // 注：若字典后续有此项可替换，当前严格依字典
+      alert('请先完成 Telegram 登录'); 
       return;
     }
     setSaving(true);
@@ -1207,7 +1206,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
     try {
       const payload = {
         user_id: currentUser.id,
-        language,
+        language, // 这里就是用户在下拉菜单里选择的新语言 ('zh' 或 'en')
       };
       if (!botInputDisabled) {
         payload.bot_token = botToken;
@@ -1223,12 +1222,21 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
         const text = await response.text();
         throw new Error(text || '保存设置失败');
       }
+      
       const result = await response.json();
-      setMessage(t('settings_save_success'));
+      
+      // 👈 2. 【核心改动】：后端成功返回 ok 之后，立刻强制让前端 UI 变更为新选择的语言！
+      i18n.changeLanguage(language);
+      
+      // 3. 将成功提示词改为字典里的 common_success（因为字典中无 settings_save_success 词条，通用 common_success）
+      setMessage(t('common_success')); 
+      
+      // 4. 执行你原本的传值回调
       onSave(result);
     } catch (err) {
       console.error('保存设置失败:', err);
-      setMessage(err.message || '保存失败');
+      // 5. 失败提示词改为字典里的 common_failed
+      setMessage(t('common_failed'));
     } finally {
       setSaving(false);
     }
@@ -1268,10 +1276,8 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-2">{t('settings_lang_label')}</label>
               <select
-                /* 🚀 1. 绑定我们全局的多语言状态变量 */
-                value={currentLang} 
-                /* 🚀 2. 切换时直接触发全局切换函数，并自动上报后端 */
-                onChange={(e) => changeLanguage(e.target.value)}
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
                 className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400"
               >
                 <option value="zh">{t('settings_zh')}</option>
@@ -1299,6 +1305,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
    2. 原生卡片配置/高级内容编辑器 (EditorScreen)
    ========================================================================== */
 function EditorScreen({ cardToEdit, onBack, onPublish }) {
+  const { t } = useTranslation();
   const [showMenu, setShowMenu] = useState(false);
   const [menuView, setMenuView] = useState('main');
   const [showBtnModal, setShowBtnModal] = useState(false);
@@ -1787,6 +1794,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
    3. 全屏卡片预览页面组件 (PreviewScreen)
    ========================================================================== */
 function PreviewScreen({ card, onBack }) {
+  const { t } = useTranslation();
   if (!card) return null;
   useEffect(() => {
     if (card && card.id) {
@@ -1832,6 +1840,7 @@ function PreviewScreen({ card, onBack }) {
    4. 数据统计可视化页面组件 (AnalyticsScreen)
    ========================================================================== */
 function AnalyticsScreen({ card, onBack }) {
+  const { t } = useTranslation();
   if (!card) return null;
 
   // 这里的 t 直接读取当前上下文的 t 函数
