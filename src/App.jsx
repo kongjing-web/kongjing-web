@@ -965,8 +965,28 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           <div className="flex flex-col gap-3">
             {cards.map((card) => {
               const isExpanded = activeCardId === card.id;
+
+              {/* 1. 【核心同步】安全解析按钮矩阵（二维数组 [[btn, btn], [...]]） */}
+              let rowButtons = [];
+              try {
+                if (card.buttons) {
+                  const parsed = typeof card.buttons === 'string' ? JSON.parse(card.buttons) : card.buttons;
+                  if (Array.isArray(parsed)) {
+                    // 如果后端数据降级是一维数组，自动升维兼容成二维矩阵
+                    if (parsed.length > 0 && !Array.isArray(parsed[0])) {
+                      rowButtons = [parsed];
+                    } else {
+                      rowButtons = parsed;
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error("解析预览卡片按钮失败:", e);
+              }
+
               return (
                 <div key={card.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
+                  {/* 卡片头部基础摘要（保留你原有的结构，方便一眼看清标题与数据） */}
                   <div className="flex gap-4 p-3 cursor-pointer active:bg-gray-50/80 transition-colors" onClick={() => toggleCardActions(card.id)}>
                     {card.media_type === 'video' ? 
                       <video src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" />
@@ -983,6 +1003,74 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                     </div>
                   </div>
 
+                  {/* 2. 【核心注入】展开时显示的 Telegram 原生仿真气泡预览框（与编辑器完全对齐） */}
+                  <div className={`px-3 transition-all duration-300 ${isExpanded ? 'pb-3 opacity-100 max-h-[1000px]' : 'max-h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
+                    <div className="bg-[#E7EBF0] p-3 rounded-2xl space-y-1.5 border border-gray-200/50">
+                      
+                      {/* A. 媒体承载容器 (高度同步原生多媒体渲染逻辑) */}
+                      {card.img && (
+                        <div className="w-full rounded-xl overflow-hidden bg-black/5 shadow-xs max-h-[180px] flex items-center justify-center relative">
+                          {card.media_type === 'video' ? (
+                            <video 
+                              src={card.img} 
+                              className="w-full object-cover max-h-[180px]" 
+                              controls 
+                              playsInline
+                            />
+                          ) : (
+                            < img 
+                              src={card.img} 
+                              alt="preview" 
+                              className="w-full object-cover max-h-[180px]" 
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      {/* B. 富文本消息主体（保留 Tiptap 生成的富文本标签渲染） */}
+                      <div className="bg-white px-3 py-2 rounded-xl text-[13px] text-gray-800 leading-relaxed break-words shadow-xs border border-gray-100/30">
+                        {card.content ? (
+                          <div 
+                            className="rich-preview-content prose prose-sm max-w-none text-[13px]"
+                            dangerouslySetInnerHTML={{ __html: card.content }} 
+                          />
+                        ) : (
+                          <p className="text-gray-400 italic text-xs">{t('editor_placeholder_text') || '暂无文本内容'}</p >
+                        )}
+                      </div>
+
+                      {/* C. 矩阵化按钮渲染 (完美同步原生横向分栏、纵向换行布局) */}
+                      {rowButtons.length > 0 && (
+                        <div className="space-y-[1.5px] pt-0.5">
+                          {rowButtons.map((row, rowIndex) => (
+                            <div 
+                              key={`home-row-${card.id}-${rowIndex}`} 
+                              className="grid gap-[1.5px]" 
+                              style={{ gridTemplateColumns: `repeat(${Math.max(1, row.length)}, 1fr)` }}
+                            >
+                              {row.map((btn, colIndex) => {
+                                const btnText = btn?.text || btn?.label || t('editor_unnamed_btn') || '按钮';
+                                return (
+                                  <button 
+                                    key={`home-btn-${card.id}-${rowIndex}-${colIndex}`}
+                                    type="button"
+                                    disabled
+                                    className="py-1.5 px-1 rounded-md text-center text-[11px] font-bold bg-[#f1f5f9]/90 border border-transparent text-slate-800 truncate select-none opacity-90 shadow-2xs"
+                                  >
+                                    {btnText}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                    </div>
+                  </div>
+
+                  {/* 3. 底部的操作按钮功能区（保留你原有的功能和操作路由） */}
                   <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
                     <button onClick={() => onNavigatePreview(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
                       <FaEye size={11} className="text-gray-400" /> {t('common_preview')}
