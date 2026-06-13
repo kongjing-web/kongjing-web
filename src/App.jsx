@@ -965,28 +965,8 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           <div className="flex flex-col gap-3">
             {cards.map((card) => {
               const isExpanded = activeCardId === card.id;
-
-              {/* 1. 【核心同步】安全解析按钮矩阵（二维数组 [[btn, btn], [...]]） */}
-              let rowButtons = [];
-              try {
-                if (card.buttons) {
-                  const parsed = typeof card.buttons === 'string' ? JSON.parse(card.buttons) : card.buttons;
-                  if (Array.isArray(parsed)) {
-                    // 如果后端数据降级是一维数组，自动升维兼容成二维矩阵
-                    if (parsed.length > 0 && !Array.isArray(parsed[0])) {
-                      rowButtons = [parsed];
-                    } else {
-                      rowButtons = parsed;
-                    }
-                  }
-                }
-              } catch (e) {
-                console.error("解析预览卡片按钮失败:", e);
-              }
-
               return (
                 <div key={card.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
-                  {/* 卡片头部基础摘要（保留你原有的结构，方便一眼看清标题与数据） */}
                   <div className="flex gap-4 p-3 cursor-pointer active:bg-gray-50/80 transition-colors" onClick={() => toggleCardActions(card.id)}>
                     {card.media_type === 'video' ? 
                       <video src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" />
@@ -1003,74 +983,6 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                     </div>
                   </div>
 
-                  {/* 2. 【核心注入】展开时显示的 Telegram 原生仿真气泡预览框（与编辑器完全对齐） */}
-                  <div className={`px-3 transition-all duration-300 ${isExpanded ? 'pb-3 opacity-100 max-h-[1000px]' : 'max-h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
-                    <div className="bg-[#E7EBF0] p-3 rounded-2xl space-y-1.5 border border-gray-200/50">
-                      
-                      {/* A. 媒体承载容器 (高度同步原生多媒体渲染逻辑) */}
-                      {card.img && (
-                        <div className="w-full rounded-xl overflow-hidden bg-black/5 shadow-xs max-h-[180px] flex items-center justify-center relative">
-                          {card.media_type === 'video' ? (
-                            <video 
-                              src={card.img} 
-                              className="w-full object-cover max-h-[180px]" 
-                              controls 
-                              playsInline
-                            />
-                          ) : (
-                            < img 
-                              src={card.img} 
-                              alt="preview" 
-                              className="w-full object-cover max-h-[180px]" 
-                              onError={(e) => { e.target.style.display = 'none'; }}
-                            />
-                          )}
-                        </div>
-                      )}
-
-                      {/* B. 富文本消息主体（保留 Tiptap 生成的富文本标签渲染） */}
-                      <div className="bg-white px-3 py-2 rounded-xl text-[13px] text-gray-800 leading-relaxed break-words shadow-xs border border-gray-100/30">
-                        {card.content ? (
-                          <div 
-                            className="rich-preview-content prose prose-sm max-w-none text-[13px]"
-                            dangerouslySetInnerHTML={{ __html: card.content }} 
-                          />
-                        ) : (
-                          <p className="text-gray-400 italic text-xs">{t('editor_placeholder_text') || '暂无文本内容'}</p >
-                        )}
-                      </div>
-
-                      {/* C. 矩阵化按钮渲染 (完美同步原生横向分栏、纵向换行布局) */}
-                      {rowButtons.length > 0 && (
-                        <div className="space-y-[1.5px] pt-0.5">
-                          {rowButtons.map((row, rowIndex) => (
-                            <div 
-                              key={`home-row-${card.id}-${rowIndex}`} 
-                              className="grid gap-[1.5px]" 
-                              style={{ gridTemplateColumns: `repeat(${Math.max(1, row.length)}, 1fr)` }}
-                            >
-                              {row.map((btn, colIndex) => {
-                                const btnText = btn?.text || btn?.label || t('editor_unnamed_btn') || '按钮';
-                                return (
-                                  <button 
-                                    key={`home-btn-${card.id}-${rowIndex}-${colIndex}`}
-                                    type="button"
-                                    disabled
-                                    className="py-1.5 px-1 rounded-md text-center text-[11px] font-bold bg-[#f1f5f9]/90 border border-transparent text-slate-800 truncate select-none opacity-90 shadow-2xs"
-                                  >
-                                    {btnText}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                    </div>
-                  </div>
-
-                  {/* 3. 底部的操作按钮功能区（保留你原有的功能和操作路由） */}
                   <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
                     <button onClick={() => onNavigatePreview(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
                       <FaEye size={11} className="text-gray-400" /> {t('common_preview')}
@@ -1884,42 +1796,93 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
 function PreviewScreen({ card, onBack }) {
   const { t } = useTranslation();
   if (!card) return null;
+
   useEffect(() => {
     if (card && card.id) {
       trackView(card.id);
     }
-  }, [card && card.id]);
+  }, [card?.id]);
+
+  // 解析按钮数据，安全防止字符串或非数组错误
+  let cardButtons = [];
+  try {
+    cardButtons = typeof card.buttons === 'string' ? JSON.parse(card.buttons) : (card.buttons || []);
+  } catch (e) {
+    cardButtons = card.buttons || [];
+  }
+
   return (
     <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
+      {/* 顶部标题栏 */}
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
         <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
         <h1 className="text-md font-medium text-gray-700">卡片效果预览</h1>
         <div className="w-10"></div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="text-center text-xs text-gray-400 my-2">今天</div>
+      {/* 模拟 Telegram 聊天视窗背景 */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-4 font-sans select-none">
+        <div className="text-center text-[12px] bg-black/10 text-white rounded-full px-2.5 py-0.5 w-max mx-auto my-2 font-medium">
+          今天
+        </div>
         
-        <div className="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+        {/* 核心改动：完美复刻 Telegram 原生 Inline Card 气泡容器 */}
+        <div className="w-full bg-white rounded-xl overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.15)] border-none max-w-[360px] mx-auto">
+          
+          {/* 图片部分：复刻 TG 的自适应铺满裁剪 */}
           {card.img && (
-            <div className="w-full bg-black flex items-center justify-center">
-              <img src={card.img} className="w-full max-h-[260px] object-contain" alt="" />
+            <div className="w-full bg-slate-100 flex items-center justify-center overflow-hidden border-b border-gray-100/50">
+              < img 
+                src={card.img} 
+                className="w-full max-h-[280px] object-cover" 
+                alt="" 
+              />
             </div>
           )}
-          <div className="p-3 text-[15px] leading-[1.4] text-black break-words font-sans space-y-2 select-none">
-            <div dangerouslySetInnerHTML={{ __html: card.content }} />
+
+          {/* 核心优化：富文本正文容器 
+            添加 'ProseMirror' 和 'tiptap-content' 等类名，或者直接声明原生排版 class，
+            确保编辑时产生的 strong, em, underline, p 标签样式完全保留。
+          */}
+          <div className="p-3 text-[15px] leading-[1.4] text-[#1F1F1F] break-words space-y-1.5 ProseMirror">
+            <div 
+              className="rich-text-container"
+              dangerouslySetInnerHTML={{ __html: card.content || '' }} 
+            />
           </div>
-          {card.buttons && card.buttons.length > 0 && (
-            <div className="p-2 border-t border-gray-50 bg-white grid gap-1.5" style={{ gridTemplateColumns: `repeat(${card.buttons.length > 1 ? 2 : 1}, 1fr)` }}>
-              {card.buttons.map(btn => (
-                <a key={btn.id} href={btn.url || "#placeholder"} target="_blank" rel="noopener noreferrer" onClick={() => trackClick(card.id)} className="py-2 px-1 bg-[#F1F5F9] rounded-md text-center text-[13px] text-[#24A1DE] font-normal truncate block shadow-sm hover:bg-slate-100">
+
+          {/* 按钮部分：无缝连接气泡，完美复刻 Telegram 内联按钮网格与颜色 */}
+          {cardButtons && cardButtons.length > 0 && (
+            <div className="p-1 bg-[#F1F5F9]/50 border-t border-gray-100 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${cardButtons.length > 1 ? 2 : 1}, 1fr)` }}>
+              {cardButtons.map((btn, index) => (
+                <a 
+                  key={btn.id || index} 
+                  href=" " 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  onClick={() => trackClick(card.id)} 
+                  className="py-2 px-2 bg-white active:bg-slate-100 border border-gray-200/60 rounded-lg text-center text-[13.5px] text-[#24A1DE] font-medium truncate block shadow-[0_1px_1px_rgba(0,0,0,0.05)] transition-colors"
+                >
                   {btn.text}
-                </a>
+                </a >
               ))}
             </div>
           )}
         </div>
       </div>
+
+      {/* 追加配套的富文本注入样式，防止全局冲突并完美对齐 Tiptap 编辑器里的视觉效果 */}
+      <style>{`
+        .ProseMirror p { margin: 0 0 6px 0; }
+        .ProseMirror p:last-child { margin: 0; }
+        .ProseMirror strong { font-weight: 700; color: #000; }
+        .ProseMirror em { italic; }
+        .ProseMirror u { text-decoration: underline; }
+        .ProseMirror a { color: #24A1DE; text-decoration: underline; pointer-events: none; }
+        .ProseMirror ul { list-style-type: disc; padding-left: 20px; margin-bottom: 6px; }
+        .ProseMirror ol { list-style-type: decimal; padding-left: 20px; margin-bottom: 6px; }
+        .ProseMirror blockquote { border-left: 3px solid #24A1DE; padding-left: 10px; color: #666; font-style: italic; }
+      `}</style>
     </div>
   );
 }
