@@ -1795,6 +1795,8 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
    ========================================================================== */
 function PreviewScreen({ card, onBack }) {
   const { t } = useTranslation();
+
+  // 1. 保底防御：如果没有 card，直接返回空，绝不往下执行
   if (!card) return null;
 
   useEffect(() => {
@@ -1804,32 +1806,38 @@ function PreviewScreen({ card, onBack }) {
   }, [card?.id]);
 
   // ==========================================
-  // 1. 解析按钮数据：解决“没有按键”的问题
+  // 2. 超强安全解析按钮：任何报错自动熔断，绝不卡死白屏
   // ==========================================
-  let cardButtons = [];
+  let safeButtons = [];
   try {
     if (card.buttons) {
-      // 自动兼容：无论是编辑中未保存的数组，还是数据库拿出来的 JSON 字符串，统统安全解析
-      cardButtons = typeof card.buttons === 'string' ? JSON.parse(card.buttons) : card.buttons;
+      let parsedButtons = [];
+      if (typeof card.buttons === 'string') {
+        // 如果是数据库拿出来的 JSON 字符串
+        parsedButtons = JSON.parse(card.buttons);
+      } else if (Array.isArray(card.buttons)) {
+        // 如果是编辑中直接传过来的原生数组
+        parsedButtons = card.buttons;
+      }
+      
+      if (Array.isArray(parsedButtons)) {
+        safeButtons = parsedButtons.filter(btn => btn && (btn.text || btn.label));
+      }
     }
   } catch (e) {
-    console.error("预览组件解析按钮失败:", e);
+    console.error("【预览组件】解析按钮极度严重错误，已自动拦截防白屏:", e);
+    safeButtons = []; // 报错了就让按钮为空，不影响大局
   }
-  
-  // 过滤出有文字的有效按钮
-  const safeButtons = Array.isArray(cardButtons) 
-    ? cardButtons.filter(btn => btn && (btn.text || btn.label))
-    : [];
 
   // ==========================================
-  // 2. 核心大招：装载与你编辑端完全相同的 Extensions 实例，开启只读
+  // 3. 核心修复：正确配置 Tiptap 实例，严禁传入依赖数组
   // ==========================================
   const previewEditor = useEditor({
     extensions: [
       StarterKit,
       Underline,
-      Spoiler,   // 👉 直接复用你文件前半部分定义好的 Spoiler 扩展
-      Copyable,  // 👉 直接复用你文件前半部分定义好的 Copyable 扩展
+      Spoiler,   // 复用你前面的扩展
+      Copyable,  // 复用你前面的扩展
       Link.configure({
         openOnClick: false,
         HTMLAttributes: {
@@ -1838,8 +1846,17 @@ function PreviewScreen({ card, onBack }) {
       }),
     ],
     content: card.content || '',
-    editable: false, // 🔒 严格纯只读，使用户无法在预览区内修改文本
-  }, [card.content]); // 监听内容动态变动，当你在编辑区修改内容后预览能实时同步
+    editable: false, // 纯只读
+  }); // ⚠️ 注意：这里绝对不能传第二个参数 [card.content]，否则直接白屏！
+
+  // ==========================================
+  // 4. 正确的实时同步：通过 useEffect 来动态更新只读编辑器内容
+  // ==========================================
+  useEffect(() => {
+    if (previewEditor && card.content !== undefined) {
+      previewEditor.commands.setContent(card.content || '');
+    }
+  }, [card.content, previewEditor]);
 
   return (
     <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200 select-none font-sans">
@@ -1859,7 +1876,7 @@ function PreviewScreen({ card, onBack }) {
         {/* Telegram 官方卡片仿真气泡 */}
         <div className="w-full bg-white rounded-xl overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.18)] border-none max-w-[350px] mx-auto">
           
-          {/* A. 封面媒体渲染层 */}
+          {/* A. 封面媒体 */}
           {card.img && (
             <div className="w-full bg-slate-50 flex items-center justify-center overflow-hidden border-b border-gray-100">
               < img 
@@ -1870,9 +1887,13 @@ function PreviewScreen({ card, onBack }) {
             </div>
           )}
 
-          {/* B. 富文本纯正文渲染层（换成了编辑器渲染，解决排版、加粗、特殊效果不生效的问题） */}
+          {/* B. 富文本纯正文渲染层 */}
           <div className="p-3 text-[15px] leading-[1.42] text-[#1C1C1E] break-words rich-text-preview-container">
-            <EditorContent editor={previewEditor} />
+            {previewEditor ? (
+              <EditorContent editor={previewEditor} />
+            ) : (
+              <div dangerouslySetInnerHTML={{ __html: card.content || '' }} />
+            )}
           </div>
 
           {/* C. 底部内联按钮 */}
@@ -1897,7 +1918,7 @@ function PreviewScreen({ card, onBack }) {
         </div>
       </div>
 
-      {/* 强行覆盖 CSS 样式，确保在全局各种样式干扰下，加粗和自定义效果依然醒目 */}
+      {/* 强行覆盖 CSS 样式，确保防剧透、一键复制和加粗完美呈现 */}
       <style>{`
         .rich-text-preview-container .ProseMirror p { margin: 0 0 6px 0; }
         .rich-text-preview-container .ProseMirror p:last-child { margin: 0; }
