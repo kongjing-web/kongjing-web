@@ -1799,36 +1799,47 @@ function PreviewScreen({ card, onBack }) {
 
   useEffect(() => {
     if (card && card.id) {
-      trackView(card.id);
+      try { trackView(card.id); } catch(e){}
     }
   }, [card?.id]);
 
-  // 1. 核心大招：直接初始化与编辑页面一模一样的 Tiptap 引擎，但设置 editable: false
+  // ==========================================
+  // 1. 解析按钮数据：解决“没有按键”的问题
+  // ==========================================
+  let cardButtons = [];
+  try {
+    if (card.buttons) {
+      // 自动兼容：无论是编辑中未保存的数组，还是数据库拿出来的 JSON 字符串，统统安全解析
+      cardButtons = typeof card.buttons === 'string' ? JSON.parse(card.buttons) : card.buttons;
+    }
+  } catch (e) {
+    console.error("预览组件解析按钮失败:", e);
+  }
+  
+  // 过滤出有文字的有效按钮
+  const safeButtons = Array.isArray(cardButtons) 
+    ? cardButtons.filter(btn => btn && (btn.text || btn.label))
+    : [];
+
+  // ==========================================
+  // 2. 核心大招：装载与你编辑端完全相同的 Extensions 实例，开启只读
+  // ==========================================
   const previewEditor = useEditor({
     extensions: [
       StarterKit,
       Underline,
+      Spoiler,   // 👉 直接复用你文件前半部分定义好的 Spoiler 扩展
+      Copyable,  // 👉 直接复用你文件前半部分定义好的 Copyable 扩展
       Link.configure({
-        openOnClick: false, // 预览状态下点击不跳转
+        openOnClick: false,
         HTMLAttributes: {
           class: 'text-[#24A1DE] underline pointer-events-none',
         },
       }),
     ],
     content: card.content || '',
-    editable: false, // 🔒 关键：开启纯只读模式
-  }, [card.content]); // 当内容改变时自动同步更新编辑器
-
-  // 2. 按钮数据安全脱壳与解析
-  let cardButtons = [];
-  try {
-    if (card.buttons) {
-      cardButtons = typeof card.buttons === 'string' ? JSON.parse(card.buttons) : card.buttons;
-    }
-  } catch (e) {
-    console.error("解析预览按钮出错:", e);
-  }
-  const safeButtons = Array.isArray(cardButtons) ? cardButtons.filter(b => b && (b.text || b.label)) : [];
+    editable: false, // 🔒 严格纯只读，使用户无法在预览区内修改文本
+  }, [card.content]); // 监听内容动态变动，当你在编辑区修改内容后预览能实时同步
 
   return (
     <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200 select-none font-sans">
@@ -1839,16 +1850,16 @@ function PreviewScreen({ card, onBack }) {
         <div className="w-10"></div>
       </div>
 
-      {/* Telegram 聊天背景 */}
+      {/* Telegram 聊天对话窗口背景 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         <div className="text-center text-[12px] text-white bg-black/15 font-medium px-2.5 py-0.5 rounded-full w-max mx-auto my-2">
           今天
         </div>
         
-        {/* Telegram 官方卡片仿真物理气泡容器 */}
+        {/* Telegram 官方卡片仿真气泡 */}
         <div className="w-full bg-white rounded-xl overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.18)] border-none max-w-[350px] mx-auto">
           
-          {/* A. 媒体渲染层 */}
+          {/* A. 封面媒体渲染层 */}
           {card.img && (
             <div className="w-full bg-slate-50 flex items-center justify-center overflow-hidden border-b border-gray-100">
               < img 
@@ -1859,8 +1870,8 @@ function PreviewScreen({ card, onBack }) {
             </div>
           )}
 
-          {/* B. 核心改变：直接丢掉 dangerouslySetInnerHTML，换上你编辑页面完全相同的渲染组件 */}
-          <div className="p-3 text-[15px] leading-[1.42] text-[#1C1C1E] break-words">
+          {/* B. 富文本纯正文渲染层（换成了编辑器渲染，解决排版、加粗、特殊效果不生效的问题） */}
+          <div className="p-3 text-[15px] leading-[1.42] text-[#1C1C1E] break-words rich-text-preview-container">
             <EditorContent editor={previewEditor} />
           </div>
 
@@ -1876,7 +1887,6 @@ function PreviewScreen({ card, onBack }) {
                   href=" " 
                   target="_blank" 
                   rel="noopener noreferrer" 
-                  onClick={() => trackClick(card.id)} 
                   className="py-2 px-2 bg-white active:bg-slate-100 border border-gray-200/60 rounded-lg text-center text-[13.5px] text-[#24A1DE] font-semibold truncate block shadow-[0_1px_1px_rgba(0,0,0,0.06)]"
                 >
                   {btn.text || btn.label}
@@ -1886,6 +1896,35 @@ function PreviewScreen({ card, onBack }) {
           )}
         </div>
       </div>
+
+      {/* 强行覆盖 CSS 样式，确保在全局各种样式干扰下，加粗和自定义效果依然醒目 */}
+      <style>{`
+        .rich-text-preview-container .ProseMirror p { margin: 0 0 6px 0; }
+        .rich-text-preview-container .ProseMirror p:last-child { margin: 0; }
+        .rich-text-preview-container .ProseMirror strong { font-weight: 700 !important; color: #000000 !important; }
+        
+        /* 防剧透样式 */
+        .rich-text-preview-container span[data-spoiler] {
+          background-color: #212121 !important;
+          color: #212121 !important;
+          border-radius: 4px;
+          padding: 0 4px;
+          cursor: pointer;
+        }
+        .rich-text-preview-container span[data-spoiler]:hover {
+          color: #ffffff !important;
+        }
+        
+        /* 一键复制样式 */
+        .rich-text-preview-container span[data-copyable] {
+          border-bottom: 1px dashed #24A1DE !important;
+          background-color: rgba(36, 161, 222, 0.1) !important;
+          color: #24A1DE !important;
+          padding: 0 4px;
+          border-radius: 4px;
+          font-family: monospace;
+        }
+      `}</style>
     </div>
   );
 }
