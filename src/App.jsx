@@ -1803,86 +1803,89 @@ function PreviewScreen({ card, onBack }) {
     }
   }, [card?.id]);
 
-  // 解析按钮数据，安全防止字符串或非数组错误
+  // 1. 核心大招：直接初始化与编辑页面一模一样的 Tiptap 引擎，但设置 editable: false
+  const previewEditor = useEditor({
+    extensions: [
+      StarterKit,
+      Underline,
+      Link.configure({
+        openOnClick: false, // 预览状态下点击不跳转
+        HTMLAttributes: {
+          class: 'text-[#24A1DE] underline pointer-events-none',
+        },
+      }),
+    ],
+    content: card.content || '',
+    editable: false, // 🔒 关键：开启纯只读模式
+  }, [card.content]); // 当内容改变时自动同步更新编辑器
+
+  // 2. 按钮数据安全脱壳与解析
   let cardButtons = [];
   try {
-    cardButtons = typeof card.buttons === 'string' ? JSON.parse(card.buttons) : (card.buttons || []);
+    if (card.buttons) {
+      cardButtons = typeof card.buttons === 'string' ? JSON.parse(card.buttons) : card.buttons;
+    }
   } catch (e) {
-    cardButtons = card.buttons || [];
+    console.error("解析预览按钮出错:", e);
   }
+  const safeButtons = Array.isArray(cardButtons) ? cardButtons.filter(b => b && (b.text || b.label)) : [];
 
   return (
-    <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
+    <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200 select-none font-sans">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
-        <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
+        <span className="text-xl cursor-pointer text-gray-400 font-bold px-2 hover:text-gray-600 transition" onClick={onBack}>{"<"}</span>
         <h1 className="text-md font-medium text-gray-700">卡片效果预览</h1>
         <div className="w-10"></div>
       </div>
 
-      {/* 模拟 Telegram 聊天视窗背景 */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-4 font-sans select-none">
-        <div className="text-center text-[12px] bg-black/10 text-white rounded-full px-2.5 py-0.5 w-max mx-auto my-2 font-medium">
+      {/* Telegram 聊天背景 */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="text-center text-[12px] text-white bg-black/15 font-medium px-2.5 py-0.5 rounded-full w-max mx-auto my-2">
           今天
         </div>
         
-        {/* 核心改动：完美复刻 Telegram 原生 Inline Card 气泡容器 */}
-        <div className="w-full bg-white rounded-xl overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.15)] border-none max-w-[360px] mx-auto">
+        {/* Telegram 官方卡片仿真物理气泡容器 */}
+        <div className="w-full bg-white rounded-xl overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.18)] border-none max-w-[350px] mx-auto">
           
-          {/* 图片部分：复刻 TG 的自适应铺满裁剪 */}
+          {/* A. 媒体渲染层 */}
           {card.img && (
-            <div className="w-full bg-slate-100 flex items-center justify-center overflow-hidden border-b border-gray-100/50">
+            <div className="w-full bg-slate-50 flex items-center justify-center overflow-hidden border-b border-gray-100">
               < img 
                 src={card.img} 
-                className="w-full max-h-[280px] object-cover" 
-                alt="" 
+                className="w-full max-h-[260px] object-cover" 
+                alt="Card Media" 
               />
             </div>
           )}
 
-          {/* 核心优化：富文本正文容器 
-            添加 'ProseMirror' 和 'tiptap-content' 等类名，或者直接声明原生排版 class，
-            确保编辑时产生的 strong, em, underline, p 标签样式完全保留。
-          */}
-          <div className="p-3 text-[15px] leading-[1.4] text-[#1F1F1F] break-words space-y-1.5 ProseMirror">
-            <div 
-              className="rich-text-container"
-              dangerouslySetInnerHTML={{ __html: card.content || '' }} 
-            />
+          {/* B. 核心改变：直接丢掉 dangerouslySetInnerHTML，换上你编辑页面完全相同的渲染组件 */}
+          <div className="p-3 text-[15px] leading-[1.42] text-[#1C1C1E] break-words">
+            <EditorContent editor={previewEditor} />
           </div>
 
-          {/* 按钮部分：无缝连接气泡，完美复刻 Telegram 内联按钮网格与颜色 */}
-          {cardButtons && cardButtons.length > 0 && (
-            <div className="p-1 bg-[#F1F5F9]/50 border-t border-gray-100 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${cardButtons.length > 1 ? 2 : 1}, 1fr)` }}>
-              {cardButtons.map((btn, index) => (
+          {/* C. 底部内联按钮 */}
+          {safeButtons.length > 0 && (
+            <div 
+              className="p-1.5 bg-[#F1F5F9]/40 border-t border-gray-100/80 grid gap-1.5" 
+              style={{ gridTemplateColumns: `repeat(${safeButtons.length > 1 ? 2 : 1}, 1fr)` }}
+            >
+              {safeButtons.map((btn, index) => (
                 <a 
                   key={btn.id || index} 
                   href=" " 
                   target="_blank" 
                   rel="noopener noreferrer" 
                   onClick={() => trackClick(card.id)} 
-                  className="py-2 px-2 bg-white active:bg-slate-100 border border-gray-200/60 rounded-lg text-center text-[13.5px] text-[#24A1DE] font-medium truncate block shadow-[0_1px_1px_rgba(0,0,0,0.05)] transition-colors"
+                  className="py-2 px-2 bg-white active:bg-slate-100 border border-gray-200/60 rounded-lg text-center text-[13.5px] text-[#24A1DE] font-semibold truncate block shadow-[0_1px_1px_rgba(0,0,0,0.06)]"
                 >
-                  {btn.text}
+                  {btn.text || btn.label}
                 </a >
               ))}
             </div>
           )}
         </div>
       </div>
-
-      {/* 追加配套的富文本注入样式，防止全局冲突并完美对齐 Tiptap 编辑器里的视觉效果 */}
-      <style>{`
-        .ProseMirror p { margin: 0 0 6px 0; }
-        .ProseMirror p:last-child { margin: 0; }
-        .ProseMirror strong { font-weight: 700; color: #000; }
-        .ProseMirror em { italic; }
-        .ProseMirror u { text-decoration: underline; }
-        .ProseMirror a { color: #24A1DE; text-decoration: underline; pointer-events: none; }
-        .ProseMirror ul { list-style-type: disc; padding-left: 20px; margin-bottom: 6px; }
-        .ProseMirror ol { list-style-type: decimal; padding-left: 20px; margin-bottom: 6px; }
-        .ProseMirror blockquote { border-left: 3px solid #24A1DE; padding-left: 10px; color: #666; font-style: italic; }
-      `}</style>
     </div>
   );
 }
