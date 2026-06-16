@@ -1407,18 +1407,18 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     ],
     content: cardToEdit ? cardToEdit.content : `<p>${t('editor_default_content')}</p >`,
     editorProps: {
-      attributes: { class: 'focus:outline-none min-h-[140px] text-[15px] leading-[1.4] text-[#000000] max-w-none break-words whitespace-pre-wrap font-sans' },
+      attributes: { class: 'focus:outline-none min-h-[140px] text-base leading-[1.4] text-[#000000] max-w-none break-words whitespace-pre-wrap font-sans' },
     },
   });
 
   // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
-  const handleMediaChange = async (e) => {
+   const handleMediaChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     const previewUrl = URL.createObjectURL(file);
     
-    // 判断媒体类型：photo、video、gif
+    // 1. 判断媒体类型：photo、video、gif
     let mediaType = 'photo';
     if (file.type.startsWith('video/')) {
       mediaType = 'video';
@@ -1426,38 +1426,97 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       mediaType = 'gif';
     }
 
-    // 设置本地预览状态，previewUrl 只用于前端预览，不保存到数据库
+    // 设置本地预览状态，previewUrl 只用于前端预览
     setMediaFile({ previewUrl, type: mediaType, uploading: true, remoteUrl: null });
-    const formData = new FormData();
-    formData.append('file', file);
 
     try {
-      const response = await fetch(`${BASE_URL}/upload`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: formData,
-      });
-      if (!response.ok) {
-        throw new Error(`上传失败：${response.status}`);
+      let finalUrl = "";
+
+      // 2. 核心分流机制：只有视频（video）走分片上传
+      if (mediaType === 'video') {
+        console.log('检测到视频文件，正在触发【分片上传】...');
+        finalUrl = await uploadVideoInChunks(file);
+      } else {
+        // GIF 和普通图片（photo）统一走【普通单片上传】
+        console.log(`检测到 ${mediaType}，正在触发【普通单片上传】...`);
+        const formData = new FormData();
+        formData.append('file', file); // 严格对应后端 upload_file 的 file
+
+        const response = await fetch(`${BASE_URL}/upload`, {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: formData,
+        });
+
+        if (!response.ok) throw new Error(`普通上传失败：${response.status}`);
+        const data = await response.json();
+        if (!data?.url) throw new Error('后端返回无效上传地址');
+        
+        finalUrl = data.url;
       }
 
-      const data = await response.json();
-      if (!data?.url) {
-        throw new Error('后端返回无效上传地址');
-      }
-
-      // 上传完成后，将公网 URL 保存到 remoteUrl，不再需要 previewUrl
+      // 3. 上传成功，统一更新状态，保存公网 URL 用于最终发布
       setMediaFile((prev) => ({
         ...prev,
-        remoteUrl: data.url,  // 公网地址，用于数据库 and 发送到 Telegram
-        previewUrl: prev.previewUrl,  // 保留 previewUrl 用于显示
+        remoteUrl: finalUrl,
+        previewUrl: prev.previewUrl,
         uploading: false,
       }));
+
     } catch (uploadError) {
-      console.error('图片上传失败:', uploadError);
-      alert('图片上传失败，请重试。');
-      // 上传失败时，清除 mediaFile 防止误保存
-      setMediaFile(null);
+      console.error('媒体文件上传失败:', uploadError);
+      alert('媒体文件上传失败，请重试。');
+      setMediaFile(null); // 上传失败时清除状态，防止误保存
+    }
+  };
+
+  // 4. 视频分片上传专用辅助函数（直接依附在组件内部）
+  const uploadVideoInChunks = async (file) => {
+    const CHUNK_SIZE = 2 * 1024 * 1024; // 规定每片大小为 2MB
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    
+    // 生成一个本次上传唯一的随机 ID
+    const uploadId = `vid_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    let lastResponseData = null;
+
+    // 循环切片并依次发送给后端
+    for (let index = 0; index < totalChunks; index++) {
+      const start = index * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunk = file.slice(start, end); // 物理切割文件
+
+      // 严格按照 FastAPI 接口要求的 Form 字段进行数据封装
+      const chunkFormData = new FormData();
+      chunkFormData.append('file_chunk', chunk);        // 对应后端 file_chunk
+      chunkFormData.append('chunk_index', index);       // 对应后端 chunk_index
+      chunkFormData.append('total_chunks', totalChunks); // 对应后端 total_chunks
+      chunkFormData.append('upload_id', uploadId);       // 对应后端 upload_id
+      chunkFormData.append('filename', file.name);       // 对应后端 filename
+
+      const response = await fetch(`${BASE_URL}/upload/chunk`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: chunkFormData
+      });
+
+      if (!response.ok) {
+        throw new Error(`视频分片 [${index}/${totalChunks}] 上传失败`);
+      }
+
+      // 如果是最后一片，后端会执行合并并返回带有真实 URL 的 JSON
+      if (index === totalChunks - 1) {
+        lastResponseData = await response.json();
+      } else {
+        // 过程中的分片，后端只返回接收成功提示，我们继续循环
+        await response.json();
+      }
+    }
+
+    // 从最后一片的返回体中提取合并压缩后的真实公网 URL
+    if (lastResponseData && lastResponseData.url) {
+      return lastResponseData.url;
+    } else {
+      throw new Error('分片合并完成，但未能获取到最终的公网URL');
     }
   };
 
@@ -1747,7 +1806,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_btn_text')}</label>
-                <input type="text" value={btnDraft.text} onChange={(e) => setBtnDraft({ ...btnDraft, text: e.target.value })} placeholder={t('editor_input_btn_text')} className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 bg-slate-50" />
+                <input type="text" value={btnDraft.text} onChange={(e) => setBtnDraft({ ...btnDraft, text: e.target.value })} placeholder={t('editor_input_btn_text')} className="w-full border rounded-xl px-3 py-2.5 text-base outline-none focus:border-blue-500 bg-slate-50" />
               </div>
 
               <div>
@@ -1773,7 +1832,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
                       btnDraft.btnType === 'callback' ? t('editor_input_callback_tip') :
                       btnDraft.btnType === 'switch' ? t('editor_input_switch_tip') : t('editor_input_url_tip')
                     }
-                    className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 bg-slate-50 font-mono text-blue-600"
+                    className="w-full border rounded-xl px-3 py-2.5 text-base outline-none focus:border-blue-500 bg-slate-50 font-mono text-blue-600"
                   />
                 </div>
               )}
@@ -1795,157 +1854,43 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
    ========================================================================== */
 function PreviewScreen({ card, onBack }) {
   const { t } = useTranslation();
-
-  // 1. 保底防御：如果没有 card，直接返回空，绝不往下执行
   if (!card) return null;
-
   useEffect(() => {
     if (card && card.id) {
-      try { trackView(card.id); } catch(e){}
+      trackView(card.id);
     }
-  }, [card?.id]);
-
-  // ==========================================
-  // 2. 超强安全解析按钮：任何报错自动熔断，绝不卡死白屏
-  // ==========================================
-  let safeButtons = [];
-  try {
-    if (card.buttons) {
-      let parsedButtons = [];
-      if (typeof card.buttons === 'string') {
-        // 如果是数据库拿出来的 JSON 字符串
-        parsedButtons = JSON.parse(card.buttons);
-      } else if (Array.isArray(card.buttons)) {
-        // 如果是编辑中直接传过来的原生数组
-        parsedButtons = card.buttons;
-      }
-      
-      if (Array.isArray(parsedButtons)) {
-        safeButtons = parsedButtons.filter(btn => btn && (btn.text || btn.label));
-      }
-    }
-  } catch (e) {
-    console.error("【预览组件】解析按钮极度严重错误，已自动拦截防白屏:", e);
-    safeButtons = []; // 报错了就让按钮为空，不影响大局
-  }
-
-  // ==========================================
-  // 3. 核心修复：正确配置 Tiptap 实例，严禁传入依赖数组
-  // ==========================================
-  const previewEditor = useEditor({
-    extensions: [
-      StarterKit,
-      Underline,
-      Spoiler,   // 复用你前面的扩展
-      Copyable,  // 复用你前面的扩展
-      Link.configure({
-        openOnClick: false,
-        HTMLAttributes: {
-          class: 'text-[#24A1DE] underline pointer-events-none',
-        },
-      }),
-    ],
-    content: card.content || '',
-    editable: false, // 纯只读
-  }); // ⚠️ 注意：这里绝对不能传第二个参数 [card.content]，否则直接白屏！
-
-  // ==========================================
-  // 4. 正确的实时同步：通过 useEffect 来动态更新只读编辑器内容
-  // ==========================================
-  useEffect(() => {
-    if (previewEditor && card.content !== undefined) {
-      previewEditor.commands.setContent(card.content || '');
-    }
-  }, [card.content, previewEditor]);
-
+  }, [card && card.id]);
   return (
-    <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200 select-none font-sans">
-      {/* 顶部标题栏 */}
+    <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
-        <span className="text-xl cursor-pointer text-gray-400 font-bold px-2 hover:text-gray-600 transition" onClick={onBack}>{"<"}</span>
+        <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
         <h1 className="text-md font-medium text-gray-700">卡片效果预览</h1>
         <div className="w-10"></div>
       </div>
 
-      {/* Telegram 聊天对话窗口背景 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="text-center text-[12px] text-white bg-black/15 font-medium px-2.5 py-0.5 rounded-full w-max mx-auto my-2">
-          今天
-        </div>
+        <div className="text-center text-xs text-gray-400 my-2">今天</div>
         
-        {/* Telegram 官方卡片仿真气泡 */}
-        <div className="w-full bg-white rounded-xl overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.18)] border-none max-w-[350px] mx-auto">
-          
-          {/* A. 封面媒体 */}
+        <div className="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
           {card.img && (
-            <div className="w-full bg-slate-50 flex items-center justify-center overflow-hidden border-b border-gray-100">
-              < img 
-                src={card.img} 
-                className="w-full max-h-[260px] object-cover" 
-                alt="Card Media" 
-              />
+            <div className="w-full bg-black flex items-center justify-center">
+              <img src={card.img} className="w-full max-h-[260px] object-contain" alt="" />
             </div>
           )}
-
-          {/* B. 富文本纯正文渲染层 */}
-          <div className="p-3 text-[15px] leading-[1.42] text-[#1C1C1E] break-words rich-text-preview-container">
-            {previewEditor ? (
-              <EditorContent editor={previewEditor} />
-            ) : (
-              <div dangerouslySetInnerHTML={{ __html: card.content || '' }} />
-            )}
+          <div className="p-3 text-[15px] leading-[1.4] text-black break-words font-sans space-y-2 select-none">
+            <div dangerouslySetInnerHTML={{ __html: card.content }} />
           </div>
-
-          {/* C. 底部内联按钮 */}
-          {safeButtons.length > 0 && (
-            <div 
-              className="p-1.5 bg-[#F1F5F9]/40 border-t border-gray-100/80 grid gap-1.5" 
-              style={{ gridTemplateColumns: `repeat(${safeButtons.length > 1 ? 2 : 1}, 1fr)` }}
-            >
-              {safeButtons.map((btn, index) => (
-                <a 
-                  key={btn.id || index} 
-                  href=" " 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="py-2 px-2 bg-white active:bg-slate-100 border border-gray-200/60 rounded-lg text-center text-[13.5px] text-[#24A1DE] font-semibold truncate block shadow-[0_1px_1px_rgba(0,0,0,0.06)]"
-                >
-                  {btn.text || btn.label}
-                </a >
+          {card.buttons && card.buttons.length > 0 && (
+            <div className="p-2 border-t border-gray-50 bg-white grid gap-1.5" style={{ gridTemplateColumns: `repeat(${card.buttons.length > 1 ? 2 : 1}, 1fr)` }}>
+              {card.buttons.map(btn => (
+                <a key={btn.id} href={btn.url || "#placeholder"} target="_blank" rel="noopener noreferrer" onClick={() => trackClick(card.id)} className="py-2 px-1 bg-[#F1F5F9] rounded-md text-center text-[13px] text-[#24A1DE] font-normal truncate block shadow-sm hover:bg-slate-100">
+                  {btn.text}
+                </a>
               ))}
             </div>
           )}
         </div>
       </div>
-
-      {/* 强行覆盖 CSS 样式，确保防剧透、一键复制和加粗完美呈现 */}
-      <style>{`
-        .rich-text-preview-container .ProseMirror p { margin: 0 0 6px 0; }
-        .rich-text-preview-container .ProseMirror p:last-child { margin: 0; }
-        .rich-text-preview-container .ProseMirror strong { font-weight: 700 !important; color: #000000 !important; }
-        
-        /* 防剧透样式 */
-        .rich-text-preview-container span[data-spoiler] {
-          background-color: #212121 !important;
-          color: #212121 !important;
-          border-radius: 4px;
-          padding: 0 4px;
-          cursor: pointer;
-        }
-        .rich-text-preview-container span[data-spoiler]:hover {
-          color: #ffffff !important;
-        }
-        
-        /* 一键复制样式 */
-        .rich-text-preview-container span[data-copyable] {
-          border-bottom: 1px dashed #24A1DE !important;
-          background-color: rgba(36, 161, 222, 0.1) !important;
-          color: #24A1DE !important;
-          padding: 0 4px;
-          border-radius: 4px;
-          font-family: monospace;
-        }
-      `}</style>
     </div>
   );
 }

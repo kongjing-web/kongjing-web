@@ -29,6 +29,31 @@ from psycopg2.pool import ThreadedConnectionPool
 from telegram_formatter import sanitize_for_telegram, truncate_caption, smart_clean_inline_keyboard
 from dotenv import load_dotenv
 load_dotenv() 
+import time
+
+def get_current_ts():
+    return int(time.time())
+
+
+def is_vip(user: dict) -> bool:
+    """
+    VIP统一判断入口（唯一标准）
+    """
+    try:
+        return int(user.get("vip_until") or 0) > get_current_ts()
+    except:
+        return False
+
+
+def vip_remaining_days(user: dict) -> int:
+    """
+    剩余VIP天数
+    """
+    try:
+        diff = int(user.get("vip_until") or 0) - get_current_ts()
+        return max(0, diff // 86400)
+    except:
+        return 0
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心")
 
 # 全局内存缓存的系统公告（供快速访问与清除）
@@ -259,7 +284,7 @@ def handle_tg_inline_query(update_data: dict):
     智能拦截器：动态识别呼叫主体。如果数据库联合查询报错，自动降级回核心Token，拒绝卡顿转圈。
     """
     # 1. 锁死大底系统凭证（兜底方案）
-    DEFAULT_BOT_TOKEN = "8732461104:AAHiXL_2QzqHFRg2zfdvews2J5RDW2KWieA"
+    DEFAULT_BOT_TOKEN = os.getenv("BOT_TOKEN")
     current_use_token = DEFAULT_BOT_TOKEN
 
     inline_query = update_data.get("inline_query")
@@ -324,11 +349,6 @@ def handle_tg_inline_query(update_data: dict):
         try: conn.close() if hasattr(conn, 'close') else conn[0].close()
         except: pass
 
-    except Exception as db_global_err:
-        print(f"[暴击错误] 数据库底层执行彻底崩溃: {str(db_global_err)}，强行激活大底默认Token响应！")
-        # 即使数据库连不上，也造个假数据塞回去，防止客户端一直转圈
-        title = "空境系统"
-        content = f"系统正在维护中，卡片ID: {card_id}"
 
     # 4. 智能洗炼按钮
     try:
@@ -463,7 +483,7 @@ async def telegram_webhook_router(request: Request):
                     new_vip_until = base_time + (7 * 24 * 3600)
                     
                     cursor.execute(
-                        "UPDATE users SET role = 'vip', vip_until = %s WHERE id = %s",
+                        "UPDATE users SET vip_until = %s WHERE id = %s",
                         (new_vip_until, user_id)
                     )
                 print(f"🎉 成功扣除官方星星，已全自动为用户 {user_id} 顺延 7 天 VIP 权限！")
@@ -533,8 +553,13 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
     if row:
         role = row[2] or 'user'
         # 如果是被封禁且非站长，则拒绝访问
-        if role == 'banned' and telegram_id != '8368521045':
-            raise HTTPException(status_code=403, detail="您的账号已被封禁，无法继续使用服务")
+        # 动态获取环境变量中的站长 ID
+        admin_super_id = str(os.getenv("ADMIN_SUPER_ID") or "").strip()
+        # 将当前用户的 telegram_id 也转为字符串，确保对比类型一致
+        current_tg_id = str(telegram_id).strip()
+        if role == 'banned':
+            if role != 'superuser' and (not admin_super_id or current_tg_id != admin_super_id):
+                raise HTTPException(status_code=403, detail="您的账号已被封禁，无法继续使用服务")
         return {
             "id": row[0],
             "telegram_id": row[0],
@@ -566,22 +591,80 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
 # 管理员权限专用依赖
 # ==========================================
 def verify_admin(current_user: dict = Depends(get_current_tg_user)) -> dict:
-    # 绝对后门：站长 ID 永远视为管理员
+    """
+    商业安全版：全面兼容环境站长、数据库超级管理员和普通管理员
+    """
     try:
         tg_id = str(current_user.get("telegram_id") or current_user.get("id") or "").strip()
     except Exception:
         tg_id = ""
+        
+    admin_super_id = str(os.getenv("ADMIN_SUPER_ID") or "").strip()
+    user_role = current_user.get("role", "user")
 
-    if tg_id == '8368521045':
+    # 1. 站长特权：如果是 .env 里指定的最高超级 ID，无条件放行
+    if admin_super_id and tg_id == admin_super_id:
         return current_user
 
-    if current_user.get("role") not in ("admin", "superuser"):
-        raise HTTPException(status_code=403, detail="权限不足")
-    return current_user
+    # 2. 数据库角色权限：如果是超级管理员(superuser)或普通管理员(admin)，放行
+    if user_role in ("admin", "superuser"):
+        return current_user
+
+    # 3. 都不满足，则是普通用户越权访问，直接拦截
+    raise HTTPException(status_code=403, detail="权限不足，拒绝访问管理员后台")
 
 # ==========================================
 # 工具函数保持原有逻辑不变
 # ==========================================
+def _validate_image_deeply(file_path: str) -> bool:
+    """
+    使用 Pillow 对图片/GIF 进行深层真实解码校验
+    """
+    try:
+        with Image.open(file_path) as img:
+            img.verify()  # 1. 第一道防线：校验文件结构完整性
+        
+        # ⚠️ 极其关键：verify 之后必须重新 open 才能进行 load
+        with Image.open(file_path) as img:
+            img.load()    # 2. 第二道防线：强行把像素数据加载到内存，如果是伪造的图片流会在此处崩溃
+        return True
+    except Exception as e:
+        print(f"❌ [图片深层校验失败] 路径: {file_path}, 原因: {str(e)}")
+        return False
+
+def _validate_video_with_ffprobe(file_path: str) -> bool:
+    """
+    使用 ffprobe 动态嗅探并硬核验证视频流的合法性
+    """
+    cmd = [
+        'ffprobe', 
+        '-v', 'error', 
+        '-show_entries', 'stream=codec_type', 
+        '-of', 'json', 
+        file_path
+    ]
+    try:
+        # 执行 ffprobe 命令抓取底层多媒体元数据
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            print(f"❌ [ffprobe 基础拒绝] 命令执行失败: {result.stderr}")
+            return False
+        
+        # 解析返回的 JSON 资产数据
+        info = json.loads(result.stdout)
+        streams = info.get('streams', [])
+        
+        # 严密检索内部是否包含合法的 video 轨道
+        has_video_stream = any(stream.get('codec_type') == 'video' for stream in streams)
+        if not has_video_stream:
+            print(f"❌ [ffprobe 安全拦截] 该视频文件内未检测到任何合法的视频轨道(Video Stream)！")
+            return False
+            
+        return True
+    except Exception as e:
+        print(f"❌ [ffprobe 执行崩溃] 视频无法解析, 详情: {str(e)}")
+        return False
+
 def _sanitize_filename(filename: str) -> str:
     name = os.path.basename(filename)
     name = re.sub(r'[^A-Za-z0-9_.-]', '_', name)
@@ -992,13 +1075,9 @@ def get_cards(current_user: dict = Depends(get_current_tg_user)):
     user_id = str(current_user.get("id"))
 
     with get_db_connection() as (_, cursor):
-        # 兼容性设计：如果是超级管理员账号，允许查看所有人的卡片；否则只查自己绑定的卡片
-        if user_id == '8368521045':
-            query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards"
-            cursor.execute(query)
-        else:
-            query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards WHERE user_id = %s"
-            cursor.execute(query, (user_id,))
+        # 永远只查自己的卡片
+        query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards WHERE user_id = %s"
+        cursor.execute(query, (user_id,))
         rows = cursor.fetchall()
 
     result = []
@@ -1215,9 +1294,8 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
                 (0, current_month, chat_id),
             )
 
-    if role != 'superuser':
-        is_vip = vip_until and int(vip_until) > now_ts
-        if not is_vip and monthly_published_count >= 5:
+    if current_user.get("role") != "superuser":
+        if not is_vip(current_user) and monthly_published_count >= 5:
             raise HTTPException(status_code=403, detail='非会员每月仅能发布5张卡片，请前往充值开启无限发布')
 
     try:
@@ -1795,7 +1873,7 @@ async def crypto_bot_webhook(request: Request):
                     new_vip_until = base_ts + (7 * 86400)
                     
                     cursor.execute(
-                        "UPDATE users SET vip_until = %s, role = 'vip_user' WHERE id = %s",
+                        "UPDATE users SET vip_until = %s WHERE id = %s",
                         (new_vip_until, user_id)
                     )
                     print(f"【充值成功】用户 {user_id} 成功续费 7 天 VIP，至 {datetime.fromtimestamp(new_vip_until)}")
