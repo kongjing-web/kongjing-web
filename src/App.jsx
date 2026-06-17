@@ -834,25 +834,41 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 // 核心功能升级：更安全的呼叫主体判定
 const handlePublishToTelegram = (card) => {
   try {
-    // 1. 你的默认系统主 Bot 用户名（请替换为你真实的主 Bot 名，不要带@）
+    // 1. 系统默认内置主 Bot 名（千万不要带 @）
     const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot"; 
 
     let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
     
-    // 2. 🛡️ 双重安全判定：只有当用户绑定了专属 Bot，且后端成功返回了 bot_username 时，才切换
-    // 这样哪怕数据库里 bot_username 偶尔为空，也会自动降级用系统默认 Bot 发送，绝不卡死！
+    // 2. 动态切换专属 Bot
     if (user && user.bot_username && user.bot_username.trim() !== "") {
-      targetBotUsername = user.bot_username.trim().replace('@', ''); // 确保过滤掉用户误输入的@符号
+      targetBotUsername = user.bot_username.trim();
     }
 
+    // 🛡️ 强制洗净前后空格和误输入的 @ 符号，防止 openTelegramLink 静默崩溃
+    targetBotUsername = targetBotUsername.replace('@', '').trim();
+
+    // 3. 构建专属卡片暗号
     const queryPayload = `card_${card.id}`;
     
-    // 3. 唤醒 Telegram 原生转发大厅
+    // 4. 🚀 【核心改变】：使用 switch_inline_query_chosen_chat 参数，强制拉起选择好友/群组/频道列表
+    // allow_user_chats, allow_group_chats, allow_channel_chats = true 代表允许发给任何人、群、频道
+    const configPayload = encodeURIComponent(JSON.stringify({
+      query: queryPayload,
+      allow_user_chats: true,
+      allow_group_chats: true,
+      allow_bot_chats: false,
+      allow_channel_chats: true
+    }));
+
+    const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query_chosen_chat=${configPayload}`;
+    
+    console.log("[🚀 调试发布直达链接]:", inlineUrl);
+
+    // 5. 唤醒 Telegram 原生面板
     if (window.Telegram?.WebApp) {
-      const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
       window.Telegram.WebApp.openTelegramLink(inlineUrl);
       
-      // 4. 异步刷新状态
+      // 6. 异步刷新状态
       setTimeout(() => {
         if (typeof fetchCards === 'function') fetchCards();
       }, 1500);
