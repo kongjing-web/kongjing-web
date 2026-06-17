@@ -1,8 +1,5 @@
 @import "tailwindcss";
 
-/* ==========================================================================
-   空境系统 - 工业黑金自定义主题 (Tailwind v4 规范)
-   ========================================================================== */
 @theme {
   --color-dark-bg: #1c1c1c;
   --color-card-bg: #2a2a2a;
@@ -16,16 +13,16 @@
   --shadow-btn: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
-/* ==========================================================================
-   全局基本样式与 iOS 移动端适配
-   ========================================================================== */
 @layer base {
-  body {
+  html, body {
     background-color: var(--color-dark-bg);
     color: #ffffff;
+    /* 👇 加上下面这三行，强行锁死宽度，禁止横向滚动和错位 */
+    width: 100%;
+    max-w-full: 100vw;
+    overflow-x: hidden;
   }
 
-  /* 消除苹果系统默认的“双击放大”延迟与高亮阴影，让卡片更像原生 App */
   button, a, [role="button"] {
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;

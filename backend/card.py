@@ -281,9 +281,8 @@ def init_db():
 
 def handle_tg_inline_query(update_data: dict):
     """
-    智能拦截器：动态识别呼叫主体。如果数据库联合查询报错，自动降级回核心Token，拒绝卡顿转圈。
+    智能内联拦截器：完美融合所有权校验、file_id高速缓存与额度控制
     """
-    # 1. 锁死大底系统凭证（兜底方案）
     DEFAULT_BOT_TOKEN = os.getenv("BOT_TOKEN")
     current_use_token = DEFAULT_BOT_TOKEN
 
@@ -293,90 +292,111 @@ def handle_tg_inline_query(update_data: dict):
         
     query_id = inline_query.get("id")
     query_text = str(inline_query.get("query") or "").strip()
-    print(f"[内联查询触发] 收到暗号: {query_text}")
     
-    # 2. 精准提取出唯一的卡片 ID
-    card_id = None
-    if query_text.startswith("card_"):
-        card_id = query_text.replace("card_", "")
-    else:
-        card_id = query_text
-        
-    if not card_id or len(card_id) < 5:
-        print("[内联查询提示] 暗号长度过短，拒绝响应")
+    # 【新增提取】拿到当前操作者的个人 Telegram ID
+    operator_tg_id = str(inline_query.get("from", {}).get("id") or "").strip()
+    
+    # 2. 精准提取卡片 ID
+    card_id = query_text.replace("card_", "") if query_text.startswith("card_") else query_text
+    if not card_id or len(card_id) < 1:
         return None
 
-    # 初始化变量，防止查询失败后未定义报错
-    title, content, img, buttons_raw, media_type = None, None, None, None, None
+    # 初始化变量
+    title, content, img, buttons_raw, media_type, saved_tg_file_id = None, None, None, None, None, None
 
-    # 3. 🛡️ 超强容错数据库检索：完全契合原生的上下文管理器写法
+    # 3. 🛡️ 超强容错数据库检索
     try:
-        # 使用你最熟悉的 with 机制，完美解包出真实的游标对象 cursor
         with get_db_connection() as (_, cursor):
+            # 【平移发布功能】把原发布接口的 saved_tg_file_id, user_id 一并捞出来
             cursor.execute(
-                "SELECT title, content, img, buttons, media_type, user_id FROM cards WHERE id = %s",
+                "SELECT title, content, img, buttons, media_type, user_id, tg_file_id FROM cards WHERE id = %s",
                 (card_id,)
             )
             row = cursor.fetchone()
             
             if row:
-                title, content, img, buttons_raw, media_type, user_id = row
-                print(f"[核心命中] 成功捞出卡片数据: {title}")
+                title, content, img, buttons_raw, media_type, card_user_id, saved_tg_file_id = row
                 
-                # 尝试去捞取专属 VIP Token（包裹在独立的 try 结构里，即使 users 表没配置这个字段也绝不影响普通用户）
+                # =================【功能补全 1：核心权限校验】=================
+                # 非本人且不是超级管理员（你的固定ID），直接拦截，下发无权提示卡片
+                if str(card_user_id).strip() != operator_tg_id and operator_tg_id != '8368521045':
+                    send_inline_error_card(query_id, current_use_token, "发布失败：您没有权限发布此卡片 ❌")
+                    return None
+                
+                # =================【功能补全 3：额度校验前置】=================
+                # 查询用户当前额度及VIP状态
+                cursor.execute(
+                    "SELECT role, vip_until, monthly_published_count FROM users WHERE telegram_id = %s",
+                    (operator_tg_id,)
+                )
+                user_row = cursor.fetchone()
+                if user_row:
+                    role, vip_until, monthly_published_count = user_row
+                    # 调用你们统一的 VIP 工具判断
+                    is_user_vip = int(vip_until or 0) > int(time.time())
+                    if role != "superuser" and not is_user_vip and monthly_published_count >= 5:
+                        send_inline_error_card(query_id, current_use_token, "额度不足：非会员每月仅能发布5张卡片 ⚠️")
+                        return None
+
+                # 尝试无缝切换专属 Token
                 try:
-                    cursor.execute("SELECT bot_token FROM users WHERE id = %s", (user_id,))
-                    user_row = cursor.fetchone()
-                    if user_row and user_row[0] and str(user_row[0]).strip() != "":
-                        current_use_token = str(user_row[0]).strip()
-                        print(f"[专属成功] 判定为高级VIP卡片，已成功无缝切换专属Token！")
+                    cursor.execute("SELECT bot_token FROM users WHERE telegram_id = %s", (str(card_user_id),))
+                    u_row = cursor.fetchone()
+                    if u_row and u_row[0] and str(u_row[0]).strip() != "":
+                        current_use_token = str(u_row[0]).strip()
                 except Exception as u_err:
-                    print(f"[安全提示] 检索VIP专属Token失败（可能无此字段），自动切回系统默认Token。详情: {str(u_err)}")
+                    print(f"[安全提示] 检索专属Token异常: {str(u_err)}")
             else:
-                print(f"[内联查询警告] 数据库未找到此卡片ID: {card_id}")
-                title = "空境提示"
-                content = "⚠️ 未能找到该卡片或卡片已被删除。"
+                send_inline_error_card(query_id, current_use_token, "⚠️ 未能找到该卡片或已被删除。")
+                return None
 
     except Exception as db_global_err:
-        print(f"[暴击错误] 数据库底层执行彻底崩溃: {str(db_global_err)}，强行激活大底默认Token响应！")
-        # 即使发生意外也友好展示
-        title = "空境系统"
-        content = f"系统内容加载中，请重新尝试。卡片ID: {card_id}"
-            
-        # 安全关闭游标和连接
-        try: cursor.close() 
-        except: pass
-        try: conn.close() if hasattr(conn, 'close') else conn[0].close()
-        except: pass
-
+        print(f"[暴击错误] 数据库崩溃: {str(db_global_err)}")
+        return None
 
     # 4. 智能洗炼按钮
-    try:
-        buttons_data = json.loads(buttons_raw or "[]")
-    except Exception:
-        buttons_data = []
+    try: buttons_data = json.loads(buttons_raw or "[]")
+    except: buttons_data = []
     clean_keyboard = smart_clean_inline_keyboard(buttons_data, card_id)
     reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
 
-    # 5. 文案净化
+    # 5. 文案净化与长度截断
     clean_html_content = sanitize_for_telegram((content or "").strip())
     has_media = img and str(img).strip() != ""
     limit_length = 1024 if has_media else 4096
     caption_text = truncate_caption(clean_html_content, limit=limit_length)
 
-    # 6. 构筑果实
-    import time
+    # 6. 构筑内联果实
     result_id = f"share_{card_id}_{int(time.time())}"
     inline_result = {}
 
     if has_media:
-        media_key = "photo_url" if media_type == 'photo' else "video_url"
+        # =================【功能补全 2：媒体缓存 file_id 复用】=================
+        tg_file_id = saved_tg_file_id if saved_tg_file_id else None
+        if not tg_file_id:
+            # 查 media_cache 缓存
+            try:
+                with get_db_connection() as (_, cursor):
+                    cursor.execute("SELECT file_id FROM media_cache WHERE local_url = %s", (img,))
+                    cache_row = cursor.fetchone()
+                    if cache_row: tg_file_id = cache_row[0]
+            except: pass
+
+        # 根据官方 Inline 规则：如果传 file_id，键名必须是 photo_file_id / video_file_id
+        # 如果传网络链接，键名才是 photo_url / video_url
+        if tg_file_id:
+            media_key = "photo_file_id" if media_type == 'photo' else "video_file_id"
+            media_value = tg_file_id
+        else:
+            media_key = "photo_url" if media_type == 'photo' else "video_url"
+            media_value = img
+
         inline_result = {
             "type": "photo" if media_type == 'photo' else "video",
             "id": result_id,
             "title": title or "分享卡片",
-            media_key: img,
-            "thumb_url": img,
+            media_key: media_value,
+            "thumb_url": img, # 预览缩略图依然用普通url即可
             "caption": caption_text,
             "parse_mode": "HTML"
         }
@@ -395,23 +415,39 @@ def handle_tg_inline_query(update_data: dict):
     if reply_markup:
         inline_result["reply_markup"] = reply_markup
 
-    # 7. 🚀 强制回传：不管前面发生了什么，这里必须把答案甩给 Telegram 官方
+    # 7. 🚀 强制回传给 Telegram
     telegram_api_base = f"https://api.telegram.org/bot{current_use_token}"
     payload = {
         "inline_query_id": query_id,
         "results": [inline_result],
-        "cache_time": 1, 
-        "is_personal": False
+        "cache_time": 0,  # 设为0，保证卡片数据随时修改随时同步
+        "is_personal": True # 设为True，确保每个人的内联查询独立缓存，不串号
     }
     
     try:
-        res = requests.post(f"{telegram_api_base}/answerInlineQuery", json=payload, timeout=5)
-        if res.ok:
-            print(f"[最终胜利] 成功阻断转圈，卡片预览已下发到手机端！")
-        else:
-            print(f"[官方拒绝] TG官方 answerInlineQuery 报错: {res.text}")
+        requests.post(f"{telegram_api_base}/answerInlineQuery", json=payload, timeout=5)
     except Exception as e:
-        print(f"[网络异常] 请求TG失败: {str(e)}")
+        print(f"[网络异常] 发送内联失败: {str(e)}")
+
+
+def send_inline_error_card(query_id, token, error_msg):
+    """辅助函数：发生无权或报错时，给用户返回一个友好的单条提示文本框"""
+    payload = {
+        "inline_query_id": query_id,
+        "results": [{
+            "type": "article",
+            "id": f"err_{int(time.time())}",
+            "title": "空境系统安全提示",
+            "description": error_msg,
+            "input_message_content": {
+                "message_text": f"<b>💡 空境提示：</b>\n{error_msg}",
+                "parse_mode": "HTML"
+            }
+        }],
+        "cache_time": 0
+    }
+    try: requests.post(f"https://api.telegram.org/bot{token}/answerInlineQuery", json=payload, timeout=5)
+    except: pass
 
     
 init_db()
@@ -448,19 +484,60 @@ async def telegram_webhook_router(request: Request):
         update_data = await request.json()
         print(f"[🔍 Webhook收到原生数据流]: {json.dumps(update_data)}")
         
-        # --- A. 内联查询逻辑 ---
+        # ========================================================
+        # 1. 🌟 【内联查询分支】负责响应并在用户输入框上方渲染卡片
+        # ========================================================
         if "inline_query" in update_data:
+            # 直接调用上一轮我们改造好、带有所有权和额度硬性拦截的 handle_tg_inline_query
             handle_tg_inline_query(update_data)
             return {"status": "success"}
+
+        # ========================================================
+        # 2. 🌟 【新增：内联选择分支】用户真正把卡片发出去时的“收尾看门狗”
+        # ========================================================
+        if "chosen_inline_result" in update_data:
+            chosen_result = update_data["chosen_inline_result"]
+            result_id = chosen_result.get("result_id", "")
+            operator_id = chosen_result.get("from", {}).get("id") # 谁发出去的
             
-        # --- B. 拦截星星支付预检请求（必须在 10 秒内应答 ok: True） ---
+            # 我们在 handle_tg_inline_query 里埋下的 id 格式为 "share_卡片ID_时间戳"
+            if result_id.startswith("share_"):
+                parts = result_id.split("_")
+                if len(parts) >= 2:
+                    card_id = parts[1]
+                    now_ts = int(time.time())
+                    
+                    # 🛡️ 执行数据库收尾：更新卡片状态、扣减非 VIP 用户的月发布额度
+                    with get_db_connection() as (conn, cursor):
+                        # A. 变更卡片状态为“已发布”
+                        cursor.execute("UPDATE cards SET status = %s WHERE id = %s", ("已发布", card_id))
+                        
+                        # B. 处理非超级管理员、非会员用户的额度划扣
+                        cursor.execute("SELECT role, vip_until FROM users WHERE telegram_id = %s", (str(operator_id),))
+                        u_row = cursor.fetchone()
+                        if u_row:
+                            role, vip_until = u_row
+                            is_vip = int(vip_until or 0) > now_ts
+                            if role != 'superuser' and not is_vip:
+                                cursor.execute(
+                                    "UPDATE users SET monthly_published_count = monthly_published_count + 1 WHERE telegram_id = %s",
+                                    (str(operator_id),)
+                                )
+                                print(f"[额度变更] 用户 {operator_id} 通过内联成功发布卡片 {card_id}，月额度 +1")
+            return {"status": "success"}
+
+        # ========================================================
+        # 3. 🛡️ 【支付预检分支】拦截官方星星支付预检请求
+        # ========================================================
         if "pre_checkout_query" in update_data:
             query_id = update_data["pre_checkout_query"]["id"]
             answer_url = f"https://api.telegram.org/bot{BOT_TOKEN}/answerPreCheckoutQuery"
             requests.post(answer_url, json={"pre_checkout_query_id": query_id, "ok": True})
             return {"status": "success"}
 
-        # --- C. 拦截扣款成功事件，进行数据库全自动升级履约 ---
+        # ========================================================
+        # 4. 💰 【官方星星到账分支】拦截扣款成功事件，数据库全自动到账
+        # ========================================================
         message_data = update_data.get("message", {})
         if "successful_payment" in message_data:
             payment_info = message_data["successful_payment"]
@@ -478,18 +555,18 @@ async def telegram_webhook_router(request: Request):
                     user_row = cursor.fetchone()
                     current_vip_until = user_row[0] if (user_row and user_row[0]) else 0
                     
-                    # 顺延 7 天（周费 VIP 计费逻辑）
                     base_time = max(now_ts, current_vip_until)
                     new_vip_until = base_time + (7 * 24 * 3600)
                     
                     cursor.execute(
                         "UPDATE users SET vip_until = %s WHERE id = %s",
-                        (new_vip_until, user_id)
+                        (new_vip_until, user_id) 
                     )
                 print(f"🎉 成功扣除官方星星，已全自动为用户 {user_id} 顺延 7 天 VIP 权限！")
                 return {"status": "success"}
+
     except Exception as e:
-        print(f"[Webhook接收异常]: {str(e)}")
+        [print(f"[Webhook接收异常]: {str(e)}")
         return {"status": "error", "message": str(e)}
     
         

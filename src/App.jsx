@@ -831,28 +831,41 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     }
   };
 
-  // 核心功能：点击发布直接触发 Python 后端驱动 Bot
-  const handlePublishToTelegram = async (card) => {
-    try {
-      const response = await fetch(`${BASE_URL}/publish`, {
-        method: 'POST',
-        headers: getAuthHeaders('application/json'),
-        body: JSON.stringify({
-          cardId: card.id
-        })
-      });
-      if (response.ok) {
-        alert(`${t('home_publish_success_title')}\n${t('home_publish_success_desc')}`);
-        fetchCards();
-        // 刷新列表，将卡片状态更新为“已发布”
-      } else {
-        alert(t('home_publish_failed_tip'));
-      }
-    } catch (error) {
-      console.error("发布通信故障:", error);
-      alert(`${t('home_local_mock_title')}\n${t('editor_unnamed_native')}: ${card.title}\n${t('home_btn_count')}${card.buttons?.length}`);
+// 核心功能升级：更安全的呼叫主体判定
+const handlePublishToTelegram = (card) => {
+  try {
+    // 1. 你的默认系统主 Bot 用户名（请替换为你真实的主 Bot 名，不要带@）
+    const SYSTEM_MAIN_BOT_USERNAME = "YourSystemMainBotName"; 
+
+    let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
+    
+    // 2. 🛡️ 双重安全判定：只有当用户绑定了专属 Bot，且后端成功返回了 bot_username 时，才切换
+    // 这样哪怕数据库里 bot_username 偶尔为空，也会自动降级用系统默认 Bot 发送，绝不卡死！
+    if (user && user.bot_username && user.bot_username.trim() !== "") {
+      targetBotUsername = user.bot_username.trim().replace('@', ''); // 确保过滤掉用户误输入的@符号
     }
-  };
+
+    const queryPayload = `card_${card.id}`;
+    
+    // 3. 唤醒 Telegram 原生转发大厅
+    if (window.Telegram?.WebApp) {
+      const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
+      window.Telegram.WebApp.openTelegramLink(inlineUrl);
+      
+      // 4. 异步刷新状态
+      setTimeout(() => {
+        if (typeof fetchCards === 'function') fetchCards();
+      }, 1500);
+      
+    } else {
+      alert("请在 Telegram 客户端内打开小程序以使用发布功能 ⚠️");
+    }
+
+  } catch (error) {
+    console.error("前端调起内联转发故障:", error);
+    alert("调起发布失败，请检查网络或Bot状态。");
+  }
+};
 
   useEffect(() => {
     function handleClickOutside(event) {
