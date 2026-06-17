@@ -835,7 +835,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 const handlePublishToTelegram = (card) => {
   try {
     // 1. 你的默认系统主 Bot 用户名（请替换为你真实的主 Bot 名，不要带@）
-    const SYSTEM_MAIN_BOT_USERNAME = "YourSystemMainBotName"; 
+    const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot"; 
 
     let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
     

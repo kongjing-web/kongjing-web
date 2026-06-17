@@ -566,7 +566,7 @@ async def telegram_webhook_router(request: Request):
                 return {"status": "success"}
 
     except Exception as e:
-        [print(f"[Webhook接收异常]: {str(e)}")
+        print(f"[Webhook接收异常]: {str(e)}")
         return {"status": "error", "message": str(e)}
     
         
