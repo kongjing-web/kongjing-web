@@ -847,22 +847,11 @@ const handlePublishToTelegram = (card) => {
     // 🛡️ 强制洗净前后空格和误输入的 @ 符号，防止 openTelegramLink 静默崩溃
     targetBotUsername = targetBotUsername.replace('@', '').trim();
 
-    // 3. 构建专属卡片暗号
-    const queryPayload = `card_${card.id}`;
     
-    // 4. 🚀 【核心改变】：使用 switch_inline_query_chosen_chat 参数，强制拉起选择好友/群组/频道列表
-    // allow_user_chats, allow_group_chats, allow_channel_chats = true 代表允许发给任何人、群、频道
-    const configPayload = encodeURIComponent(JSON.stringify({
-      query: queryPayload,
-      allow_user_chats: true,
-      allow_group_chats: true,
-      allow_bot_chats: false,
-      allow_channel_chats: true
-    }));
+    // 4. 正确的唤醒参数
+    const queryPayload = encodeURIComponent(`card_${card.id}`);
+    const inlineUrl = `https://t.me/${targetBotUsername}?inline=${queryPayload}`;
 
-    const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query_chosen_chat=${configPayload}`;
-    
-    console.log("[🚀 调试发布直达链接]:", inlineUrl);
 
     // 5. 唤醒 Telegram 原生面板
     if (window.Telegram?.WebApp) {
