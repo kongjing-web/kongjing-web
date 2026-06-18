@@ -834,45 +834,39 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 // 核心功能升级：更安全的呼叫主体判定
 const handlePublishToTelegram = (card) => {
   try {
-    // 1. 基础配置
-    const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot"; 
-    let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
-    
-    // 2. 动态获取目标 Bot 的用户名（洗净空格和 @）
-    if (user && user.bot_username && user.bot_username.trim() !== "") {
-      targetBotUsername = user.bot_username.trim();
-    }
-    targetBotUsername = targetBotUsername.replace('@', '').trim();
+    // 1. 准备好核心的暗号 Payload
+    const queryText = `card_${card.id}`;
+    console.log("[🚀 准备拉起分享面板] 暗号文本:", queryText);
 
-    // 3. 核心Payload拼接（必须进行 URL 编码）
-    const queryPayload = encodeURIComponent(`card_${card.id}`);
-    
-    // 💡 重点：改用标准的 switch_inline_query 链接
-    // 这个链接在 TG 内部能百分之百被识别，并弹出原生的群组/好友选择面板
-    const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
-
-    console.log("[🚀 准备拉起分享面板] 目标Bot:", targetBotUsername, "链接:", inlineUrl);
-
+    // 2. 🛡️ 判断当前是否在 Telegram App 内部环境
     if (window.Telegram?.WebApp) {
-  // 🛡️ 终极兼容改良：如果存在专属 Bot，利用开放链接能力直接指名道姓拉起目标 Bot 的面板
-  // 这样可以确保在任何环境下，拉起的 Bot 用户名与后端预期的完全一致
-  const queryPayload = encodeURIComponent(`card_${card.id}`);
-  const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
-  
-  if (typeof window.Telegram.WebApp.openTelegramLink === 'function') {
-      window.Telegram.WebApp.openTelegramLink(inlineUrl);
-  } else {
-      window.Telegram.WebApp.switchInlineQuery(`card_${card.id}`, ["users", "groups"]);
-  }
-  
-    setTimeout(() => {
-      if (typeof fetchCards === 'function') fetchCards();
-    }, 1500);
-  } else {
-    window.open(inlineUrl, '_blank');
-  }
+      console.log("[原生路由] 检测到 TG 内部环境，使用原生 switchInlineQuery 呼唤群组/好友列表");
+      
+      // ✨ 核心修正：必须用回原生 SDK 方法！
+      // 传入 ["users", "groups", "channels"] 可以精准拉起包含 好友、群组、频道 的完整选择面板
+      window.Telegram.WebApp.switchInlineQuery(queryText, ["users", "groups", "channels"]);
+      
+      // 3. 异步刷新卡片列表状态（保持你原本的业务逻辑）
+      setTimeout(() => {
+        if (typeof fetchCards === 'function') fetchCards();
+      }, 1500);
+
+    } else {
+      // 4. 🌐 普通浏览器环境（如 PC 浏览器测试）：
+      // 此时因为不在 TG 内部，才需要拼接标准的 t.me 链接来唤醒外部的 Telegram 客户端
+      const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot"; 
+      let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
+      
+      if (user && user.bot_username && user.bot_username.trim() !== "") {
+        targetBotUsername = user.bot_username.trim().replace('@', '').trim();
+      }
+      
+      const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${encodeURIComponent(queryText)}`;
+      console.log("[浏览器路由] 非TG环境，通过外部链接唤醒应用:", inlineUrl);
+      window.open(inlineUrl, '_blank');
+    }
+
   } catch (error) {
-    // 如果报错，能在右下角的 Eruda 面板看得清清楚楚
     console.error("❌ 前端发布函数执行崩溃:", error);
     alert("发布失败，请打开右下角调试面板查看原因");
   }
