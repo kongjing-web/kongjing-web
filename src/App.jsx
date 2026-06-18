@@ -854,17 +854,23 @@ const handlePublishToTelegram = (card) => {
     console.log("[🚀 准备拉起分享面板] 目标Bot:", targetBotUsername, "链接:", inlineUrl);
 
     if (window.Telegram?.WebApp) {
-      // 🛡️ 终极兼容性处理：优先使用 WebApp 内部跳转，防止被手机系统浏览器截获
+  // 🛡️ 终极兼容改良：如果存在专属 Bot，利用开放链接能力直接指名道姓拉起目标 Bot 的面板
+  // 这样可以确保在任何环境下，拉起的 Bot 用户名与后端预期的完全一致
+  const queryPayload = encodeURIComponent(`card_${card.id}`);
+  const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
+  
+  if (typeof window.Telegram.WebApp.openTelegramLink === 'function') {
+      window.Telegram.WebApp.openTelegramLink(inlineUrl);
+  } else {
       window.Telegram.WebApp.switchInlineQuery(`card_${card.id}`, ["users", "groups"]);
-      
-      // 4. 异步刷新状态
-      setTimeout(() => {
-        if (typeof fetchCards === 'function') fetchCards();
-      }, 1500);
-    } else {
-      // 如果在 PC 普通浏览器测试，则降级直接打开新窗口
-      window.open(inlineUrl, '_blank');
-    }
+  }
+  
+    setTimeout(() => {
+      if (typeof fetchCards === 'function') fetchCards();
+    }, 1500);
+  } else {
+    window.open(inlineUrl, '_blank');
+  }
   } catch (error) {
     // 如果报错，能在右下角的 Eruda 面板看得清清楚楚
     console.error("❌ 前端发布函数执行崩溃:", error);
