@@ -855,7 +855,7 @@ const handlePublishToTelegram = (card) => {
 
     if (window.Telegram?.WebApp) {
       // 🛡️ 终极兼容性处理：优先使用 WebApp 内部跳转，防止被手机系统浏览器截获
-      window.Telegram.WebApp.openTelegramLink(inlineUrl);
+      window.Telegram.WebApp.switchInlineQuery(`card_${card.id}`, ["users", "groups"]);
       
       // 4. 异步刷新状态
       setTimeout(() => {
