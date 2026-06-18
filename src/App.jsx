@@ -834,32 +834,41 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 // 核心功能升级：更安全的呼叫主体判定
 const handlePublishToTelegram = (card) => {
   try {
-    // 1. 核心修正：不再拼接 t.me 链接，直接准备 Payload
-    // 注意：switchInlineQuery 传参不需要带 @Bot用户名，Telegram 会自动帮你补全当前连通的 Bot 名
-    const queryPayload = `card_${card.id}`;
+    // 1. 基础配置
+    const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot"; 
+    let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
+    
+    // 2. 动态获取目标 Bot 的用户名（洗净空格和 @）
+    if (user && user.bot_username && user.bot_username.trim() !== "") {
+      targetBotUsername = user.bot_username.trim();
+    }
+    targetBotUsername = targetBotUsername.replace('@', '').trim();
 
-    console.log("[🚀 调试发布]: 正在唤起原生选择面板，Payload:", queryPayload);
+    // 3. 核心Payload拼接（必须进行 URL 编码）
+    const queryPayload = encodeURIComponent(`card_${card.id}`);
+    
+    // 💡 重点：改用标准的 switch_inline_query 链接
+    // 这个链接在 TG 内部能百分之百被识别，并弹出原生的群组/好友选择面板
+    const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
 
-    // 2. 唤醒 Telegram 原生面板
+    console.log("[🚀 准备拉起分享面板] 目标Bot:", targetBotUsername, "链接:", inlineUrl);
+
     if (window.Telegram?.WebApp) {
+      // 🛡️ 终极兼容性处理：优先使用 WebApp 内部跳转，防止被手机系统浏览器截获
+      window.Telegram.WebApp.openTelegramLink(inlineUrl);
       
-      // 使用官方推荐的原生内联切换方法
-      // 第二个参数可选：指定允许用户选择的聊天类型列表（用户、私聊、群组、频道）
-      window.Telegram.WebApp.switchInlineQuery(
-        queryPayload, 
-        ['users', 'chats', 'groups', 'channels']
-      );
-      
-      // 3. 异步刷新状态
+      // 4. 异步刷新状态
       setTimeout(() => {
         if (typeof fetchCards === 'function') fetchCards();
       }, 1500);
-      
     } else {
-      alert("请在 Telegram 客户端内打开小程序以使用发布功能 ⚠️");
+      // 如果在 PC 普通浏览器测试，则降级直接打开新窗口
+      window.open(inlineUrl, '_blank');
     }
   } catch (error) {
-    console.error("发布异常:", error);
+    // 如果报错，能在右下角的 Eruda 面板看得清清楚楚
+    console.error("❌ 前端发布函数执行崩溃:", error);
+    alert("发布失败，请打开右下角调试面板查看原因");
   }
 };
 
