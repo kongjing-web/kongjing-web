@@ -834,7 +834,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 // 核心功能升级：更安全的呼叫主体判定
 const handlePublishToTelegram = (card) => {
   try {
-    // 1. 系统默认内置主 Bot 名（千万不要带 @）
+    // 1. 🚨 警告：请确保这里的名字跟你在 BotFather 申请的主 Bot 用户名完全一致！
     const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot"; 
 
     let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
@@ -847,17 +847,18 @@ const handlePublishToTelegram = (card) => {
     // 🛡️ 强制洗净前后空格和误输入的 @ 符号，防止 openTelegramLink 静默崩溃
     targetBotUsername = targetBotUsername.replace('@', '').trim();
 
-    
-    // 4. 正确的唤醒参数
+    // 3. 核心修正：必须使用官方标准的 switch_inline_query 参数
+    // 这样进入列表选择任何一个好友/群组后，会自动在输入框中填入：@你的Bot名 card_xxx，从而激活后端日志！
     const queryPayload = encodeURIComponent(`card_${card.id}`);
-    const inlineUrl = `https://t.me/${targetBotUsername}?inline=${queryPayload}`;
+    const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
 
+    console.log("[🚀 调试发布直达链接]:", inlineUrl);
 
-    // 5. 唤醒 Telegram 原生面板
+    // 4. 唤醒 Telegram 原生面板
     if (window.Telegram?.WebApp) {
       window.Telegram.WebApp.openTelegramLink(inlineUrl);
       
-      // 6. 异步刷新状态
+      // 5. 异步刷新状态
       setTimeout(() => {
         if (typeof fetchCards === 'function') fetchCards();
       }, 1500);
