@@ -834,31 +834,23 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 // 核心功能升级：更安全的呼叫主体判定
 const handlePublishToTelegram = (card) => {
   try {
-    // 1. 🚨 警告：请确保这里的名字跟你在 BotFather 申请的主 Bot 用户名完全一致！
-    const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot"; 
+    // 1. 核心修正：不再拼接 t.me 链接，直接准备 Payload
+    // 注意：switchInlineQuery 传参不需要带 @Bot用户名，Telegram 会自动帮你补全当前连通的 Bot 名
+    const queryPayload = `card_${card.id}`;
 
-    let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
-    
-    // 2. 动态切换专属 Bot
-    if (user && user.bot_username && user.bot_username.trim() !== "") {
-      targetBotUsername = user.bot_username.trim();
-    }
+    console.log("[🚀 调试发布]: 正在唤起原生选择面板，Payload:", queryPayload);
 
-    // 🛡️ 强制洗净前后空格和误输入的 @ 符号，防止 openTelegramLink 静默崩溃
-    targetBotUsername = targetBotUsername.replace('@', '').trim();
-
-    // 3. 核心修正：必须使用官方标准的 switch_inline_query 参数
-    // 这样进入列表选择任何一个好友/群组后，会自动在输入框中填入：@你的Bot名 card_xxx，从而激活后端日志！
-    const queryPayload = encodeURIComponent(`card_${card.id}`);
-    const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
-
-    console.log("[🚀 调试发布直达链接]:", inlineUrl);
-
-    // 4. 唤醒 Telegram 原生面板
+    // 2. 唤醒 Telegram 原生面板
     if (window.Telegram?.WebApp) {
-      window.Telegram.WebApp.openTelegramLink(inlineUrl);
       
-      // 5. 异步刷新状态
+      // 使用官方推荐的原生内联切换方法
+      // 第二个参数可选：指定允许用户选择的聊天类型列表（用户、私聊、群组、频道）
+      window.Telegram.WebApp.switchInlineQuery(
+        queryPayload, 
+        ['users', 'chats', 'groups', 'channels']
+      );
+      
+      // 3. 异步刷新状态
       setTimeout(() => {
         if (typeof fetchCards === 'function') fetchCards();
       }, 1500);
@@ -866,10 +858,8 @@ const handlePublishToTelegram = (card) => {
     } else {
       alert("请在 Telegram 客户端内打开小程序以使用发布功能 ⚠️");
     }
-
   } catch (error) {
-    console.error("前端调起内联转发故障:", error);
-    alert("调起发布失败，请检查网络或Bot状态。");
+    console.error("发布异常:", error);
   }
 };
 

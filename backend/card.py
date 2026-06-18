@@ -442,7 +442,7 @@ def handle_tg_inline_query(update_data: dict, bot_token: str):
                     "type": "photo",
                     "id": result_id,
                     "photo_url": img,
-                    "thumb_url": img,
+                    "thumbnail_url": img,
                     "caption": caption_text,
                     "parse_mode": "HTML"
                 }
@@ -452,7 +452,7 @@ def handle_tg_inline_query(update_data: dict, bot_token: str):
                     "id": result_id,
                     "video_url": img,
                     "mime_type": "video/mp4",
-                    "thumb_url": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200", 
+                    "thumbnail_url": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200", 
                     "title": title or "分享视频",
                     "caption": caption_text,
                     "parse_mode": "HTML"
