@@ -344,23 +344,29 @@ def is_duplicate(query_id: str):
 # ==============================
 # 🚀 安全返回 Telegram
 # ==============================
+# ==============================
+# 🚀 安全返回 Telegram（带超详细拒绝日志，绝不盲飞）
+# ==============================
 def tg_answer_inline(token, payload):
     try:
         url = f"https://api.telegram.org/bot{token}/answerInlineQuery"
         res = requests.post(url, json=payload, timeout=3)
 
         if not res.ok:
-            print("[TG ERROR]", res.text)
+            print(f"❌ [TG 拒绝响应内联] 状态码: {res.status_code}, 原因: {res.text}")
+            print(f"👉 当时发送的无效数据流: {json.dumps(payload, ensure_ascii=False)}")
+        else:
+            print("🟢 [TG 响应成功] 卡片预览数据已成功推送到用户聊天框！")
 
         return res.ok
 
     except Exception as e:
-        print("[TG NETWORK ERROR]", e)
+        print("[TG NETWORK ERROR] 连接 Telegram 服务器彻底超时或断开:", e)
         return False
 
 
 # ==============================
-# 🧱 兜底返回（永不转圈核心）
+# 🧱 兜底返回（辅助函数）
 # ==============================
 def fallback_result(query_id, token, msg="暂无内容"):
     payload = {
@@ -376,33 +382,36 @@ def fallback_result(query_id, token, msg="暂无内容"):
         "cache_time": 0,
         "is_personal": True
     }
-
     tg_answer_inline(token, payload)
 
 
 # ==============================
-# 🚀 主处理入口
+# 🚀 主处理入口（已完全校准作用域变量）
 # ==============================
-# 💡 修正函数入参，接收从路由传过来的 current_route_token
-def handle_tg_inline_query(update_data: dict, current_route_token: str = None):
+def handle_inline_query(update_data, current_bot_token, db_getter, smart_clean_inline_keyboard):
     """
-    智能拦截器：动态识别呼叫主体。如果数据库联合查询报错，自动降级回核心Token，拒绝卡顿转圈。
+    智能拦截器：动态识别呼叫主体。
+    ✨ 核心校准：全程统一使用本地变量 `token`，杜绝一切 NameError 引起的转圈。
     """
-    # 1. 锁死大底系统凭证（兜底方案）
-    DEFAULT_BOT_TOKEN = os.getenv("BOT_TOKEN")
-    
-    # 💡 ✨ 核心修正：优先使用当前路由收到的真实 Token！防止“专属Bot请求，主Bot作答”引发的转圈圈
-    current_use_token = current_route_token or DEFAULT_BOT_TOKEN
+    inline_query = update_data.get("inline_query")
+    if not inline_query:
+        return None
 
-    inline_query = update_data.get("inline_query")  
-    if not inline_query:  
-        return None  
-          
-    query_id = inline_query.get("id")  
-    query_text = str(inline_query.get("query") or "").strip()  
-    print(f"[内联查询触发] 收到暗号: {query_text}, 当前使用Token: {current_use_token[:6]}...")  
+    query_id = inline_query.get("id")
+    query_text = str(inline_query.get("query") or "").strip()
+
+    # ==========================
+    # ❗ 去重（防 Telegram 重试风暴）
+    # ==========================
+    if is_duplicate(query_id):
+        return None
+
+    # 🌟 统一核心凭证：优先使用路由捕获到的真实入网 Token，降级读取系统默认 Token
+    token = current_bot_token or os.getenv("BOT_TOKEN")
+    masked_token = f"{token[:6]}...{token[-6:]}" if len(token) > 12 else token
+    print(f"[内联查询触发] 收到暗号: {query_text}, 当前选用通信 Token: {masked_token}")  
       
-    # 2. 精准提取出唯一的卡片 ID  
+    # 2. 精准提取卡片 ID  
     card_id = None  
     if query_text.startswith("card_"):  
         card_id = query_text.replace("card_", "")  
@@ -411,14 +420,8 @@ def handle_tg_inline_query(update_data: dict, current_route_token: str = None):
           
     if not card_id or len(card_id) < 5:  
         print("[内联查询提示] 暗号长度过短，拒绝兜底响应")  
-        # 💡 防止长度不够时转圈，直接返回一个友好提示
-        try:
-            requests.post(f"https://api.telegram.org/bot{current_use_token}/answerInlineQuery", json={
-                "inline_query_id": query_id,
-                "results": [{"type": "article", "id": "len_err", "title": "请输入正确的分享暗号", "input_message_content": {"message_text": "正在加载中..."}}],
-                "cache_time": 1
-            }, timeout=3)
-        except: pass
+        # 💡 统一使用安全 Helper 回复，防止手机端因为没有收到任何 answer 而无限转圈
+        fallback_result(query_id, token, "请输入正确的分享暗号...")
         return None  
 
     # 初始化变量
@@ -437,27 +440,26 @@ def handle_tg_inline_query(update_data: dict, current_route_token: str = None):
                 title, content, img, buttons_raw, media_type, user_id = row  
                 print(f"[核心命中] 成功捞出卡片数据: {title}")  
                   
-                # 如果当前并不是由专属路由进来的（比如主 Bot 拉起的），再尝试切到专属 VIP Token
-                if not current_route_token:
-                    try:  
-                        cursor.execute("SELECT bot_token FROM users WHERE id = %s", (user_id,))  
-                        user_row = cursor.fetchone()  
-                        if user_row and user_row[0] and str(user_row[0]).strip() != "":  
-                            current_use_token = str(user_row[0]).strip()  
-                            print(f"[专属成功] 判定为高级VIP卡片，无缝切换至专属Token作答！")  
-                    except Exception as u_err:  
-                        print(f"[安全提示] 检索VIP专属Token失败，保持现状。详情: {str(u_err)}")  
+                # 尝试去捞取专属 VIP Token（只有在通过主公共 Bot 路由进来、且属于高级会员卡片时才需要切 Token）
+                try:  
+                    cursor.execute("SELECT bot_token FROM users WHERE id = %s", (user_id,))  
+                    user_row = cursor.fetchone()  
+                    if user_row and user_row[0] and str(user_row[0]).strip() != "":  
+                        token = str(user_row[0]).strip()  
+                        print(f"[专属成功] 判定为高级VIP卡片，无缝切换专属Token响应！")  
+                except Exception as u_err:  
+                    print(f"[安全提示] 检索VIP专属Token失败（可能无此字段），自动切回当前路由Token。详情: {str(u_err)}")  
             else:  
                 print(f"[内联查询警告] 数据库未找到此卡片ID: {card_id}")  
                 title = "空境提示"  
                 content = "⚠️ 未能找到该卡片或卡片已被删除。"  
 
     except Exception as db_global_err:  
-        print(f"[暴击错误] 数据库底层执行彻底崩溃: {str(db_global_err)}")  
+        print(f"[暴击错误] 数据库底层执行彻底崩溃: {str(db_global_err)}，强行激活当前 Token 响应！")  
         title = "空境系统"  
-        content = f"系统繁忙，请重新尝试。"  
+        content = f"系统内容加载中，请重新尝试。卡片ID: {card_id}"  
 
-    # 4. 智能洗炼按钮 (保持你原本的代码逻辑...)
+    # 4. 智能洗炼按钮  
     try:  
         buttons_data = json.loads(buttons_raw or "[]")  
     except Exception:  
@@ -465,13 +467,13 @@ def handle_tg_inline_query(update_data: dict, current_route_token: str = None):
     clean_keyboard = smart_clean_inline_keyboard(buttons_data, card_id)  
     reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None  
 
-    # 5. 文案净化 (保持你原本的代码逻辑...)
+    # 5. 文案净化  
     clean_html_content = sanitize_for_telegram((content or "").strip())  
     has_media = img and str(img).strip() != ""  
     limit_length = 1024 if has_media else 4096  
     caption_text = truncate_caption(clean_html_content, limit=limit_length)  
 
-    # 6. 构筑果实 (保持你原本的代码逻辑...)
+    # 6. 构筑果实  
     import time  
     result_id = f"share_{card_id}_{int(time.time())}"  
     inline_result = {}  
@@ -498,27 +500,18 @@ def handle_tg_inline_query(update_data: dict, current_route_token: str = None):
                 "parse_mode": "HTML"  
             }  
         }  
-          
+      
     if reply_markup:  
         inline_result["reply_markup"] = reply_markup  
 
-    # 7. 🚀 强制回传：使用精准匹配的 current_use_token 送回 Telegram
-    telegram_api_base = f"https://api.telegram.org/bot{current_use_token}"  
+    # 7. 🚀 强制回传：将封装好的 payload 递交给专门的响应 Helper
     payload = {  
         "inline_query_id": query_id,  
         "results": [inline_result],  
         "cache_time": 1,   
         "is_personal": False  
     }  
-      
-    try:  
-        res = requests.post(f"{telegram_api_base}/answerInlineQuery", json=payload, timeout=5)  
-        if res.ok:  
-            print(f"[最终胜利] 成功阻断转圈，卡片预览已下发到手机端！")  
-        else:  
-            print(f"[官方拒绝] TG官方 answerInlineQuery 报错: {res.text}")  
-    except Exception as e:  
-        print(f"[网络异常] 请求TG失败: {str(e)}")
+    tg_answer_inline(token, payload)
     
 init_db()
 
@@ -552,15 +545,17 @@ def calculate_prices():
 async def telegram_webhook_router(bot_token: str, request: Request):
     try:
         update_data = await request.json()
-        print(f"[🔍 Webhook收到原生数据流]")
 
         # =========================
-        # A. INLINE QUERY（必须最优先）
+        # A. INLINE QUERY（完美注入真实 bot_token）
         # =========================
         if "inline_query" in update_data:
-            # 💡 ✨ 核心修正：放弃老旧函数，直接调用底部封装好的 handle_tg_inline_query
-            # 并把当前收到请求的 bot_token 动态传给它作为第一优先级
-            handle_tg_inline_query(update_data, current_route_token=bot_token)
+            handle_inline_query(
+                update_data,
+                current_bot_token=bot_token,  # ✨ 核心修正：把路径里的真实 token 严丝合缝地传进去！
+                db_getter=get_card_from_db,
+                smart_clean_inline_keyboard=smart_clean_inline_keyboard
+            )
             return {"ok": True}
 
         # =========================

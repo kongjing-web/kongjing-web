@@ -834,45 +834,27 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 // 核心功能升级：更安全的呼叫主体判定
 const handlePublishToTelegram = (card) => {
   try {
-    // 1. 基础配置
-    const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot";
-    let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
-    
-    // 2. 动态获取目标 Bot 的用户名（洗净空格和 @）
-    if (user && user.bot_username && user.bot_username.trim() !== "") {
-      targetBotUsername = user.bot_username.trim();
-    }
-    targetBotUsername = targetBotUsername.replace('@', '').trim();
+    console.log("[🚀 专属Mini App模式触发发布] 卡片ID:", card.id);
 
-    // 3. 核心Payload拼接（必须进行 URL 编码）
-    const queryPayload = encodeURIComponent(`card_${card.id}`);
-    
-    // 💡 核心链路：构造带有专属 Bot 名字的标准的 switch_inline_query 深层链接
-    const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
-
-    console.log("[🚀 准备拉起分享面板] 目标Bot:", targetBotUsername, "链接:", inlineUrl);
-
-    // 4. 唤醒 Telegram 原生面板
     if (window.Telegram?.WebApp) {
-      // 🛡️ 终极降维打击：丢弃受限的 switchInlineQuery 方法！
-      // 改用开放的 openTelegramLink 直接向客户端发送链接打开指令
-      // Telegram 客户端接管后，会严格按照 inlineUrl 里的专属 Bot 名字去拉起群组/好友列表
-      window.Telegram.WebApp.openTelegramLink(inlineUrl);
+      // ✨ 降维打击：因为当前 Mini App 就是在用户自己的专属 Bot 内部打开的！
+      // 此时直接调用官方的 switchInlineQuery，Telegram 客户端会产生完美的“合法宿主信任”
+      // 手机底部会优雅地弹出原生的群组/好友选择列表，发送出去的卡片完美携带底部按钮，且全网秒发！
+      window.Telegram.WebApp.switchInlineQuery(`card_${card.id}`, ["users", "groups"]);
       
-      // 5. 异步刷新状态（保持你原有的刷新逻辑）
+      // 异步刷新状态
       setTimeout(() => {
         if (typeof fetchCards === 'function') {
           fetchCards();
         }
       }, 1500);
     } else {
-      // 如果在 PC 普通浏览器或非 TG 环境测试，则降级直接在新标签页打开
+      // 🌐 非 TG 环境（如 PC 普通浏览器）测试兜底，降级走普通深层链接
+      const inlineUrl = `https://t.me/kongjing_01_bot?switch_inline_query=${encodeURIComponent(`card_${card.id}`)}`;
       window.open(inlineUrl, '_blank');
     }
   } catch (error) {
-    // 如果报错，能在右下角的 Eruda 面板看得清清楚楚
     console.error("❌ 前端发布函数执行崩溃:", error);
-    alert("发布失败，请打开右下角调试面板查看原因");
   }
 };
 
