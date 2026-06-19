@@ -834,39 +834,43 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 // 核心功能升级：更安全的呼叫主体判定
 const handlePublishToTelegram = (card) => {
   try {
-    // 1. 准备好核心的暗号 Payload
-    const queryText = `card_${card.id}`;
-    console.log("[🚀 准备拉起分享面板] 暗号文本:", queryText);
+    // 1. 基础配置
+    const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot";
+    let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
+    
+    // 2. 动态获取目标 Bot 的用户名（洗净空格和 @）
+    if (user && user.bot_username && user.bot_username.trim() !== "") {
+      targetBotUsername = user.bot_username.trim();
+    }
+    targetBotUsername = targetBotUsername.replace('@', '').trim();
 
-    // 2. 🛡️ 判断当前是否在 Telegram App 内部环境
+    // 3. 核心Payload拼接（必须进行 URL 编码）
+    const queryPayload = encodeURIComponent(`card_${card.id}`);
+    
+    // 💡 核心链路：构造带有专属 Bot 名字的标准的 switch_inline_query 深层链接
+    const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${queryPayload}`;
+
+    console.log("[🚀 准备拉起分享面板] 目标Bot:", targetBotUsername, "链接:", inlineUrl);
+
+    // 4. 唤醒 Telegram 原生面板
     if (window.Telegram?.WebApp) {
-      console.log("[原生路由] 检测到 TG 内部环境，使用原生 switchInlineQuery 呼唤群组/好友列表");
+      // 🛡️ 终极降维打击：丢弃受限的 switchInlineQuery 方法！
+      // 改用开放的 openTelegramLink 直接向客户端发送链接打开指令
+      // Telegram 客户端接管后，会严格按照 inlineUrl 里的专属 Bot 名字去拉起群组/好友列表
+      window.Telegram.WebApp.openTelegramLink(inlineUrl);
       
-      // ✨ 核心修正：必须用回原生 SDK 方法！
-      // 传入 ["users", "groups", "channels"] 可以精准拉起包含 好友、群组、频道 的完整选择面板
-      window.Telegram.WebApp.switchInlineQuery(queryText, ["users", "groups", "channels"]);
-      
-      // 3. 异步刷新卡片列表状态（保持你原本的业务逻辑）
+      // 5. 异步刷新状态（保持你原有的刷新逻辑）
       setTimeout(() => {
-        if (typeof fetchCards === 'function') fetchCards();
+        if (typeof fetchCards === 'function') {
+          fetchCards();
+        }
       }, 1500);
-
     } else {
-      // 4. 🌐 普通浏览器环境（如 PC 浏览器测试）：
-      // 此时因为不在 TG 内部，才需要拼接标准的 t.me 链接来唤醒外部的 Telegram 客户端
-      const SYSTEM_MAIN_BOT_USERNAME = "kongjing_service_bot"; 
-      let targetBotUsername = SYSTEM_MAIN_BOT_USERNAME;
-      
-      if (user && user.bot_username && user.bot_username.trim() !== "") {
-        targetBotUsername = user.bot_username.trim().replace('@', '').trim();
-      }
-      
-      const inlineUrl = `https://t.me/${targetBotUsername}?switch_inline_query=${encodeURIComponent(queryText)}`;
-      console.log("[浏览器路由] 非TG环境，通过外部链接唤醒应用:", inlineUrl);
+      // 如果在 PC 普通浏览器或非 TG 环境测试，则降级直接在新标签页打开
       window.open(inlineUrl, '_blank');
     }
-
   } catch (error) {
+    // 如果报错，能在右下角的 Eruda 面板看得清清楚楚
     console.error("❌ 前端发布函数执行崩溃:", error);
     alert("发布失败，请打开右下角调试面板查看原因");
   }
