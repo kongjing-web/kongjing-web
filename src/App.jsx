@@ -836,50 +836,40 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
 // 🚀 【完美原生发布】：彻底干掉后端代发 sendMessage，零延迟不转圈
   const handlePublishToTelegram = async (card) => {
-    // 1. 环境预检（安全包裹，防止 t 未定义崩溃）
-    if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
-      alert('请在 Telegram 小程序真实内置环境中打开并操作');
+  if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
+    alert('请在 Telegram 真实环境中打开');
+    return;
+  }
+
+  try {
+    const initData = window.Telegram.WebApp.initData;
+
+    // 直接使用原生 fetch 发送请求
+    const response = await fetch('https://www.kongjing.online/api/publish', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${initData}` // 传递 TG 的身份凭证
+      },
+      body: JSON.stringify({ card_id: card.id })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || result.status !== 'success') {
+      alert(result.detail || result.message || '激活失败');
       return;
     }
 
-    // 2. 匿名拦截  
-    if (isAnonymous) {  
-      alert('请先完成授权登录');  
-      return;  
-    }  
+    // 后端激活成功后，拉起原生分享
+    const inlineQueryText = `card_${card.id}`;
+    window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
 
-    try {
-      // 🌟 【核心补丁】：先向你的 FastAPI 后端报备，激活卡片状态并扣除限额
-      // 请将 URL 替换为你真实的后端 API 地址，并确保 Headers 里带上了 Bearer Token
-      const initData = window.Telegram.WebApp.initData; 
-      
-      const response = await axios.post('https://www.kongjing.online/api/publish', 
-        { card_id: card.id },
-        {
-          headers: {
-            'Authorization': `Bearer ${initData}` // 确保中间件 get_current_tg_user 能正常解密
-          }
-        }
-      );
-
-      if (response.data.status !== 'success') {
-        alert(response.data.message || '卡片激活失败');
-        return;
-      }
-
-      // 3. 后端激活成功后，构建高阶内联查询关键词 (格式如: card_123)  
-      const inlineQueryText = `card_${card.id}`;  
-
-      // 4. 原生调起分享：直接在 Telegram 内部拉起好友/群组/频道列表  
-      window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
-        
-    } catch (error) {  
-      console.error("发布流程遭遇异常:", error);  
-      // 智能提取后端抛出的 HTTPException 错误信息（如：普通用户每月仅能发布5张...）
-      const serverMessage = error.response?.data?.detail || error.message;
-      alert(`发布失败: ${serverMessage}`);  
-    }
-  };
+  } catch (error) {
+    console.error("发布失败:", error);
+    alert("网络请求异常，请检查后端服务");
+  }
+};
 
   useEffect(() => {
     function handleClickOutside(event) {
