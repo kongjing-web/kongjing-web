@@ -786,21 +786,24 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   const user = currentUser || null;
   const wxUsername = user?.username || t('common_anonymous');
   const wxRole = user ? (user.role === 'superuser' ? t('home_role_superuser') : t('home_user_regular')) : t('home_not_logged_in');
-  const vipStatus = user?.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000) ? t('home_vip_active') : (user ? t('home_user_regular') : t('home_not_logged_in'));
+  
+  // 👑 【修复 VIP 计算】：后端接口返回 role 和 vip_until，不带有独立的布尔值，在此处进行高精度统一计算
+  const isVipUser = user?.role === 'superuser' || user?.role === 'vip' || (user?.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000));
+  const vipStatus = isVipUser ? t('home_vip_active') : (user ? t('home_user_regular') : t('home_not_logged_in'));
 
-  // 优先读取 user?.tg_id，其次回退到 Telegram WebApp initDataUnsafe 中的 id
+  // 🆔 【修复 ID 兼容】：强力兼容支持新旧 ID 字段 (telegram_id / tg_id)，防止保存设置后解析断裂变成匿名用户
   const telegramInitId = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initDataUnsafe?.user?.id : null;
-  const resolvedId = (user && user.tg_id) ? user.tg_id : (telegramInitId ? telegramInitId : null);
+  const resolvedId = (user && (user.telegram_id || user.tg_id)) ? (user.telegram_id || user.tg_id) : (telegramInitId ? telegramInitId : null);
   const isAnonymous = (user && user.is_anonymous === true) || !resolvedId;
   const displayName = isAnonymous ? t('common_anonymous') : `${t('common_id')}${resolvedId}`;
   
-  // VIP 标签：只有非匿名用户时展示
-  const vipTag = !isAnonymous ? (user?.is_vip ? 'VIP' : t('home_user_regular')) : null;
+  // VIP 标签：只有非匿名用户时展示，同样基于计算后的真实权限状态
+  const vipTag = !isAnonymous ? (isVipUser ? 'VIP' : t('home_user_regular')) : null;
   
-  // 专属 Bot 状态（保持原变量名判断 user?.has_bot / user?.bot_username）
+  // 🤖 【Bot 状态灯重构】：彻底抛弃不稳定的 has_bot 依赖，直接用是否有真实的 bot_username 字符串作为高可信绑定标志
   const botStatus = isAnonymous
     ? { text: t('home_waiting_auth'), className: 'text-gray-400' }
-    : (user?.has_bot ? { text: `● ${t('home_bound')}@${user?.bot_username}`, className: 'text-emerald-500' } : { text: `○ ${t('home_not_bound')}`, className: 'text-amber-500' });
+    : (user?.bot_username ? { text: `● ${t('home_bound')}@${user?.bot_username}`, className: 'text-emerald-500' } : { text: `○ ${t('home_not_bound')}`, className: 'text-amber-500' });
   
   const isAdmin = user?.role === 'admin' || user?.role === 'superuser';
 
@@ -831,32 +834,35 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     }
   };
 
-// 核心功能升级：更安全的呼叫主体判定
-const handlePublishToTelegram = (card) => {
-  try {
-    console.log("[🚀 专属Mini App模式触发发布] 卡片ID:", card.id);
-
-    if (window.Telegram?.WebApp) {
-      // ✨ 降维打击：因为当前 Mini App 就是在用户自己的专属 Bot 内部打开的！
-      // 此时直接调用官方的 switchInlineQuery，Telegram 客户端会产生完美的“合法宿主信任”
-      // 手机底部会优雅地弹出原生的群组/好友选择列表，发送出去的卡片完美携带底部按钮，且全网秒发！
-      window.Telegram.WebApp.switchInlineQuery(`card_${card.id}`, ["users", "groups"]);
-      
-      // 异步刷新状态
-      setTimeout(() => {
-        if (typeof fetchCards === 'function') {
-          fetchCards();
-        }
-      }, 1500);
-    } else {
-      // 🌐 非 TG 环境（如 PC 普通浏览器）测试兜底，降级走普通深层链接
-      const inlineUrl = `https://t.me/kongjing_01_bot?switch_inline_query=${encodeURIComponent(`card_${card.id}`)}`;
-      window.open(inlineUrl, '_blank');
+// 🚀 【完美原生发布】：彻底干掉后端代发 sendMessage，零延迟不转圈
+  const handlePublishToTelegram = (card) => {
+    // 1. 安全预检：确保运行在 Telegram Mini App 真实内置环境中
+    if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
+      alert(t('home_local_mock_title') || '非 Telegram 环境，无法唤起原生发布');
+      return;
     }
-  } catch (error) {
-    console.error("❌ 前端发布函数执行崩溃:", error);
-  }
-};
+
+    // 2. 匿名拦截
+    if (isAnonymous) {
+      alert(t('auth_fail') || '请先完成授权登录');
+      return;
+    }
+
+    // 3. 构建高阶内联查询关键词 (格式如: card_123)
+    // 用户在接下来的 TG 弹窗中选择群组/频道后，TG 会向该租户 Bot 发送 inline_query
+    // 后端现有的 handle_tg_inline_query 会秒级拦截并吐出精美卡片
+    const inlineQueryText = `card_${card.id}`;
+
+    try {
+      // 4. 原生调起分享：直接在 Telegram 内部拉起好友/群组/频道列表
+      // 限制可选范围为：用户(users)、群组(groups)、频道(channels)，完美净化交互流程
+      window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
+      
+    } catch (error) {
+      console.error("唤起 TG 原生发布失败:", error);
+      alert('您的 Telegram 客户端版本过低，请升级后重试');
+    }
+  };
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -1201,50 +1207,91 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
   const botInputDisabled = !isVip;
 
   const handleSave = async () => {
-    if (!currentUser?.id) {
-      alert('请先完成 Telegram 登录'); 
-      return;
-    }
-    setSaving(true);
-    setMessage(null);
-    try {
-      const payload = {
-        user_id: currentUser.id,
-        language, // 这里就是用户在下拉菜单里选择的新语言 ('zh' 或 'en')
-      };
-      if (!botInputDisabled) {
-        payload.bot_token = botToken;
+      if (!currentUser?.id) {
+        alert('请先完成 Telegram 登录');
+        return;
       }
+      setSaving(true);
+      setMessage(null);
+      
+      try {
+        // ===== 事务一：首先同步多语言设置 =====
+        const langResponse = await fetch(`${BASE_URL}/user/update_settings`, {
+          method: 'POST',
+          headers: getAuthHeaders('application/json'),
+          body: JSON.stringify({
+            user_id: currentUser.id,
+            language // 'zh' 或 'en'
+          }),
+        });
+        
+        if (!langResponse.ok) {
+          throw new Error('通用基础设置同步失败');
+        }
+        
+        // 让本地多语言实例立刻强制生效
+        i18n.changeLanguage(language);
 
-      const response = await fetch(`${BASE_URL}/user/update_settings`, {
-        method: 'POST',
-        headers: getAuthHeaders('application/json'),
-        body: JSON.stringify(payload),
-      });
+        // 用于存储准备回传给上层 state 的最终合并用户信息
+        let updatedUserResult = {
+          ...currentUser,
+          language
+        };
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || '保存设置失败');
+        // ===== 事务二：智能判断并联调核心一键 Bot 托管绑定接口 =====
+        // 如果用户有 VIP/高级 权限，并且输入了 Bot Token
+        if (!botInputDisabled && botToken.trim()) {
+          const bindResponse = await fetch(`${BASE_URL}/bot/bind`, {
+            method: 'POST',
+            headers: getAuthHeaders('application/json'),
+            body: JSON.stringify({
+              bot_token: botToken.trim()
+            }),
+          });
+
+          const bindData = await bindResponse.json().catch(() => ({}));
+
+          if (!bindResponse.ok) {
+            // 如果后端抛出了 400/502 等预检错误，直接将 HTTPException 里的 detail 细节展示给用户
+            throw new Error(bindData.detail || '专属 Bot 托管下发失败，请核对 Token');
+          }
+
+          // 绑定成功：捕获后端一键脚本返回的真实 bot_username
+          updatedUserResult.bot_token = botToken.trim();
+          updatedUserResult.bot_username = bindData.bot_username;
+          
+        } else if (!botInputDisabled && !botToken.trim()) {
+          // 兜底：如果用户删除了 Token，说明想解绑，传入空字符串重置
+          const unbindResponse = await fetch(`${BASE_URL}/user/update_settings`, {
+            method: 'POST',
+            headers: getAuthHeaders('application/json'),
+            body: JSON.stringify({ user_id: currentUser.id, bot_token: "", language }),
+          });
+          if (unbindResponse.ok) {
+            const unbindData = await unbindResponse.json();
+            updatedUserResult = unbindData;
+          }
+        } else {
+          // 如果只是普通用户修改语言，直接用修改语言接口返回的最新行数据
+          const langData = await langResponse.json().catch(() => ({}));
+          if (langData.telegram_id) updatedUserResult = langData;
+        }
+
+        // ===== 事务三：成功闭环与上层状态回传 =====
+        setMessage(t('common_success'));
+        
+        // 执行原本的传值回调，将最新附带 bot_username 属性的 user 字典同步更新给全局
+        if (onSave) {
+          onSave(updatedUserResult);
+        }
+        
+      } catch (err) {
+        console.error('配置中心更新事务故障:', err);
+        setMessage(err.message || t('common_failed'));
+      } finally {
+        setSaving(false);
       }
-      
-      const result = await response.json();
-      
-      // 👈 2. 【核心改动】：后端成功返回 ok 之后，立刻强制让前端 UI 变更为新选择的语言！
-      i18n.changeLanguage(language);
-      
-      // 3. 将成功提示词改为字典里的 common_success（因为字典中无 settings_save_success 词条，通用 common_success）
-      setMessage(t('common_success')); 
-      
-      // 4. 执行你原本的传值回调
-      onSave(result);
-    } catch (err) {
-      console.error('保存设置失败:', err);
-      // 5. 失败提示词改为字典里的 common_failed
-      setMessage(t('common_failed'));
-    } finally {
-      setSaving(false);
-    }
-  };
+    };
 
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
@@ -1411,18 +1458,18 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     ],
     content: cardToEdit ? cardToEdit.content : `<p>${t('editor_default_content')}</p >`,
     editorProps: {
-      attributes: { class: 'focus:outline-none min-h-[140px] text-base leading-[1.4] text-[#000000] max-w-none break-words whitespace-pre-wrap font-sans' },
+      attributes: { class: 'focus:outline-none min-h-[140px] text-[15px] leading-[1.4] text-[#000000] max-w-none break-words whitespace-pre-wrap font-sans' },
     },
   });
 
   // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
-   const handleMediaChange = async (e) => {
+  const handleMediaChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     const previewUrl = URL.createObjectURL(file);
     
-    // 1. 判断媒体类型：photo、video、gif
+    // 判断媒体类型：photo、video、gif
     let mediaType = 'photo';
     if (file.type.startsWith('video/')) {
       mediaType = 'video';
@@ -1430,97 +1477,38 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       mediaType = 'gif';
     }
 
-    // 设置本地预览状态，previewUrl 只用于前端预览
+    // 设置本地预览状态，previewUrl 只用于前端预览，不保存到数据库
     setMediaFile({ previewUrl, type: mediaType, uploading: true, remoteUrl: null });
+    const formData = new FormData();
+    formData.append('file', file);
 
     try {
-      let finalUrl = "";
-
-      // 2. 核心分流机制：只有视频（video）走分片上传
-      if (mediaType === 'video') {
-        console.log('检测到视频文件，正在触发【分片上传】...');
-        finalUrl = await uploadVideoInChunks(file);
-      } else {
-        // GIF 和普通图片（photo）统一走【普通单片上传】
-        console.log(`检测到 ${mediaType}，正在触发【普通单片上传】...`);
-        const formData = new FormData();
-        formData.append('file', file); // 严格对应后端 upload_file 的 file
-
-        const response = await fetch(`${BASE_URL}/upload`, {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: formData,
-        });
-
-        if (!response.ok) throw new Error(`普通上传失败：${response.status}`);
-        const data = await response.json();
-        if (!data?.url) throw new Error('后端返回无效上传地址');
-        
-        finalUrl = data.url;
-      }
-
-      // 3. 上传成功，统一更新状态，保存公网 URL 用于最终发布
-      setMediaFile((prev) => ({
-        ...prev,
-        remoteUrl: finalUrl,
-        previewUrl: prev.previewUrl,
-        uploading: false,
-      }));
-
-    } catch (uploadError) {
-      console.error('媒体文件上传失败:', uploadError);
-      alert('媒体文件上传失败，请重试。');
-      setMediaFile(null); // 上传失败时清除状态，防止误保存
-    }
-  };
-
-  // 4. 视频分片上传专用辅助函数（直接依附在组件内部）
-  const uploadVideoInChunks = async (file) => {
-    const CHUNK_SIZE = 2 * 1024 * 1024; // 规定每片大小为 2MB
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    
-    // 生成一个本次上传唯一的随机 ID
-    const uploadId = `vid_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-    let lastResponseData = null;
-
-    // 循环切片并依次发送给后端
-    for (let index = 0; index < totalChunks; index++) {
-      const start = index * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
-      const chunk = file.slice(start, end); // 物理切割文件
-
-      // 严格按照 FastAPI 接口要求的 Form 字段进行数据封装
-      const chunkFormData = new FormData();
-      chunkFormData.append('file_chunk', chunk);        // 对应后端 file_chunk
-      chunkFormData.append('chunk_index', index);       // 对应后端 chunk_index
-      chunkFormData.append('total_chunks', totalChunks); // 对应后端 total_chunks
-      chunkFormData.append('upload_id', uploadId);       // 对应后端 upload_id
-      chunkFormData.append('filename', file.name);       // 对应后端 filename
-
-      const response = await fetch(`${BASE_URL}/upload/chunk`, {
+      const response = await fetch(`${BASE_URL}/upload`, {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: chunkFormData
+        body: formData,
       });
-
       if (!response.ok) {
-        throw new Error(`视频分片 [${index}/${totalChunks}] 上传失败`);
+        throw new Error(`上传失败：${response.status}`);
       }
 
-      // 如果是最后一片，后端会执行合并并返回带有真实 URL 的 JSON
-      if (index === totalChunks - 1) {
-        lastResponseData = await response.json();
-      } else {
-        // 过程中的分片，后端只返回接收成功提示，我们继续循环
-        await response.json();
+      const data = await response.json();
+      if (!data?.url) {
+        throw new Error('后端返回无效上传地址');
       }
-    }
 
-    // 从最后一片的返回体中提取合并压缩后的真实公网 URL
-    if (lastResponseData && lastResponseData.url) {
-      return lastResponseData.url;
-    } else {
-      throw new Error('分片合并完成，但未能获取到最终的公网URL');
+      // 上传完成后，将公网 URL 保存到 remoteUrl，不再需要 previewUrl
+      setMediaFile((prev) => ({
+        ...prev,
+        remoteUrl: data.url,  // 公网地址，用于数据库 and 发送到 Telegram
+        previewUrl: prev.previewUrl,  // 保留 previewUrl 用于显示
+        uploading: false,
+      }));
+    } catch (uploadError) {
+      console.error('图片上传失败:', uploadError);
+      alert('图片上传失败，请重试。');
+      // 上传失败时，清除 mediaFile 防止误保存
+      setMediaFile(null);
     }
   };
 
@@ -1810,7 +1798,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_btn_text')}</label>
-                <input type="text" value={btnDraft.text} onChange={(e) => setBtnDraft({ ...btnDraft, text: e.target.value })} placeholder={t('editor_input_btn_text')} className="w-full border rounded-xl px-3 py-2.5 text-base outline-none focus:border-blue-500 bg-slate-50" />
+                <input type="text" value={btnDraft.text} onChange={(e) => setBtnDraft({ ...btnDraft, text: e.target.value })} placeholder={t('editor_input_btn_text')} className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 bg-slate-50" />
               </div>
 
               <div>
@@ -1836,7 +1824,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
                       btnDraft.btnType === 'callback' ? t('editor_input_callback_tip') :
                       btnDraft.btnType === 'switch' ? t('editor_input_switch_tip') : t('editor_input_url_tip')
                     }
-                    className="w-full border rounded-xl px-3 py-2.5 text-base outline-none focus:border-blue-500 bg-slate-50 font-mono text-blue-600"
+                    className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 bg-slate-50 font-mono text-blue-600"
                   />
                 </div>
               )}
