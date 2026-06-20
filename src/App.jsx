@@ -835,32 +835,49 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   };
 
 // 🚀 【完美原生发布】：彻底干掉后端代发 sendMessage，零延迟不转圈
-  const handlePublishToTelegram = (card) => {
-    // 1. 安全预检：确保运行在 Telegram Mini App 真实内置环境中
+  const handlePublishToTelegram = async (card) => {
+    // 1. 环境预检（安全包裹，防止 t 未定义崩溃）
     if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
-      alert(t('home_local_mock_title') || '非 Telegram 环境，无法唤起原生发布');
+      alert('请在 Telegram 小程序真实内置环境中打开并操作');
       return;
     }
 
-    // 2. 匿名拦截
-    if (isAnonymous) {
-      alert(t('auth_fail') || '请先完成授权登录');
-      return;
-    }
-
-    // 3. 构建高阶内联查询关键词 (格式如: card_123)
-    // 用户在接下来的 TG 弹窗中选择群组/频道后，TG 会向该租户 Bot 发送 inline_query
-    // 后端现有的 handle_tg_inline_query 会秒级拦截并吐出精美卡片
-    const inlineQueryText = `card_${card.id}`;
+    // 2. 匿名拦截  
+    if (isAnonymous) {  
+      alert('请先完成授权登录');  
+      return;  
+    }  
 
     try {
-      // 4. 原生调起分享：直接在 Telegram 内部拉起好友/群组/频道列表
-      // 限制可选范围为：用户(users)、群组(groups)、频道(channels)，完美净化交互流程
-      window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
+      // 🌟 【核心补丁】：先向你的 FastAPI 后端报备，激活卡片状态并扣除限额
+      // 请将 URL 替换为你真实的后端 API 地址，并确保 Headers 里带上了 Bearer Token
+      const initData = window.Telegram.WebApp.initData; 
       
-    } catch (error) {
-      console.error("唤起 TG 原生发布失败:", error);
-      alert('您的 Telegram 客户端版本过低，请升级后重试');
+      const response = await axios.post('https://www.kongjing.online/api/publish', 
+        { card_id: card.id },
+        {
+          headers: {
+            'Authorization': `Bearer ${initData}` // 确保中间件 get_current_tg_user 能正常解密
+          }
+        }
+      );
+
+      if (response.data.status !== 'success') {
+        alert(response.data.message || '卡片激活失败');
+        return;
+      }
+
+      // 3. 后端激活成功后，构建高阶内联查询关键词 (格式如: card_123)  
+      const inlineQueryText = `card_${card.id}`;  
+
+      // 4. 原生调起分享：直接在 Telegram 内部拉起好友/群组/频道列表  
+      window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
+        
+    } catch (error) {  
+      console.error("发布流程遭遇异常:", error);  
+      // 智能提取后端抛出的 HTTPException 错误信息（如：普通用户每月仅能发布5张...）
+      const serverMessage = error.response?.data?.detail || error.message;
+      alert(`发布失败: ${serverMessage}`);  
     }
   };
 

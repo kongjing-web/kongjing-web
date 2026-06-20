@@ -244,9 +244,9 @@ def init_db():
 # ==============================================================================
 # 🛡️ 多租户内联控制中心（核心 Inline Query 拦截）
 # ==============================================================================
-def handle_tg_inline_query(update_data: dict):
+def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
     """
-    ⭐稳定版 Inline Handler（多租户去中心化核心，根据卡片拥有者动态切换 Token 响应）
+    ⭐完美原生发布 Inline Handler（完美对齐发信 Bot，支持相对图片路径自动修补与 HTML 容错自愈）
     """
     DEFAULT_BOT_TOKEN = os.getenv("BOT_TOKEN")
     current_use_token = DEFAULT_BOT_TOKEN 
@@ -258,8 +258,26 @@ def handle_tg_inline_query(update_data: dict):
     query_id = inline_query.get("id")
     query_text = str(inline_query.get("query") or "").strip() 
 
-    print(f"[Inline触发] query = {query_text}")
+    print(f"[Inline触发] 收到内联查询: query='{query_text}', 路由租户ID(tenant_id)={tenant_id}")
 
+    # 1. 👑 【核心对齐】：根据进站 Webhook 路由精准锁定收信 Bot 令牌，彻底解决多端冲突转圈
+    if tenant_id:
+        try:
+            with get_db_connection() as (_, cursor):
+                cursor.execute(
+                    "SELECT bot_token FROM users WHERE telegram_id = %s",
+                    (str(tenant_id).strip(),)
+                )
+                u = cursor.fetchone()
+                if u and u[0]:
+                    current_use_token = u[0].strip()
+                    print(f"[Token精准对齐] 成功切换至专属租户 Bot Token 响应")
+        except Exception as token_err:
+            print(f"[Token对齐异常] 提取租户 {tenant_id} 令牌失败:", token_err)
+    else:
+        print(f"[Token精准对齐] 锁定系统中央母舰主 BOT_TOKEN 响应")
+
+    # 2. 解析卡片 ID
     if query_text.startswith("card_"):
         card_id = query_text.replace("card_", "")
     else:
@@ -282,22 +300,21 @@ def handle_tg_inline_query(update_data: dict):
                 return send_inline_empty(query_id, current_use_token, "卡片不存在或已删除")
 
             title, content, img, buttons_raw, media_type, user_id = row 
-
-            # ✨ 动态溯源：根据卡片持有者的特定账户信息，决定使用哪一个自主 Bot Token 进行内联响应
-            try:
-                cursor.execute(
-                    "SELECT bot_token FROM users WHERE id = %s",
-                    (user_id,)
-                )
-                u = cursor.fetchone()
-                if u and u[0]:
-                    current_use_token = u[0].strip()
-            except:
-                pass 
-
     except Exception as e:
         print("[DB错误]", e)
-        return send_inline_empty(query_id, current_use_token, "系统错误，请稍后再试") 
+        return send_inline_empty(query_id, current_use_token, "系统数据加载失败") 
+
+    # 3. 🖼️ 【路径智能修补】：防止本地相对路径（如 /uploads/xxx）导致 TG 抓取不到预览而产生无限转圈
+    has_media = bool(img and str(img).strip())
+    if has_media:
+        img_str = str(img).strip()
+        if not (img_str.startswith("http://") or img_str.startswith("https://")):
+            img_str = img_str.lstrip("/")
+            base_url = API_BASE_URL.rstrip("/")
+            if img_str.startswith("api/"):
+                img_str = img_str[4:]
+            img = f"{base_url}/{img_str}"
+            print(f"[图片路径自愈] 相对路径已修补为公网绝对URL: {img}")
 
     try:
         buttons_data = json.loads(buttons_raw or "[]")
@@ -311,8 +328,6 @@ def handle_tg_inline_query(update_data: dict):
         reply_markup = None 
 
     clean_html = sanitize_for_telegram((content or "").strip())
-    has_media = bool(img and str(img).strip())
-
     limit = 1024 if has_media else 4096
     caption = truncate_caption(clean_html, limit=limit) 
 
@@ -322,7 +337,7 @@ def handle_tg_inline_query(update_data: dict):
         inline_result = {
             "type": "photo",
             "id": result_id,
-            "title": title or "卡片",
+            "title": title or "精美可视化卡片",
             "photo_url": img,
             "thumb_url": img,
             "caption": caption,
@@ -332,8 +347,8 @@ def handle_tg_inline_query(update_data: dict):
         inline_result = {
             "type": "article",
             "id": result_id,
-            "title": title or "卡片",
-            "description": caption[:80],
+            "title": title or "精美可视化卡片",
+            "description": caption[:80] if caption else "点击发布卡片",
             "input_message_content": {
                 "message_text": caption,
                 "parse_mode": "HTML"
@@ -350,39 +365,36 @@ def handle_tg_inline_query(update_data: dict):
         "is_personal": True
     } 
 
+    # 4. 🚀 【硬核自愈发信层】：若用户输入了导致 HTML 乱序未闭合的排版，TG 返回 400 时瞬间自动脱钩降级，绝不转圈！
     try:
         res = requests.post(
             f"https://api.telegram.org/bot{current_use_token}/answerInlineQuery",
             json=payload,
             timeout=3
         )
+        
+        # 降级自愈触发点：如果是 HTML 解析错误导致的失败，直接剥离 parse_mode 重新下发
+        if not res.ok and ("parse" in res.text.lower() or "entity" in res.text.lower() or "entities" in res.text.lower()):
+            print(f"[⚠️ HTML格式自愈] 检测到排版引发 HTML 语法崩溃，正在启动免解析无痕降级重试...")
+            
+            if "parse_mode" in inline_result:
+                inline_result["parse_mode"] = None
+            if "input_message_content" in inline_result and "parse_mode" in inline_result["input_message_content"]:
+                inline_result["input_message_content"]["parse_mode"] = None
+            
+            payload["results"] = [inline_result]
+            res = requests.post(
+                f"https://api.telegram.org/bot{current_use_token}/answerInlineQuery",
+                json=payload,
+                timeout=3
+            )
+            
         if not res.ok:
-            print("[TG错误]", res.text)
+            print("[TG内联核心网关报错]:", res.text)
+        else:
+            print("[Inline响应成功] 内联卡片数据已成功秒级闭合下发！")
     except Exception as e:
-        print("[网络错误]", e) 
-
-def send_inline_empty(query_id, token, msg):
-    payload = {
-        "inline_query_id": query_id,
-        "results": [{
-            "type": "article",
-            "id": "empty",
-            "title": "提示",
-            "input_message_content": {
-                "message_text": msg
-            }
-        }],
-        "cache_time": 0
-    } 
-
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/answerInlineQuery",
-            json=payload,
-            timeout=3
-        )
-    except:
-        pass 
+        print("[网络通信发信故障]:", e)
 
     
 init_db() 
@@ -455,7 +467,7 @@ async def telegram_webhook_router(request: Request, tenant_id: Optional[str] = N
         # 🚀 拦截各租户渠道内联查询（Inline Query）
         # ----------------------------------------------------------------------
         if "inline_query" in update_data:
-            await run_in_threadpool(handle_tg_inline_query, update_data)
+            await run_in_threadpool(handle_tg_inline_query, update_data, tenant_id)
             return {"status": "success"} 
             
         return {"status": "success"} 
@@ -1052,6 +1064,14 @@ class AdminToggleBanInput(BaseModel):
 
 class AdminToggleCardStatusInput(BaseModel):
     card_id: str
+
+class UpdateSettingsInput(BaseModel):
+    """
+    用户通用设置及多语言偏好同步请求体
+    """
+    user_id: Union[str, int]             # 兼容支持字符串或纯数字的 Telegram ID
+    language: Optional[str] = None       # 语言选项，如 'zh' 或 'en'
+    bot_token: Optional[str] = None      # 专属 Bot 凭证（解绑时前端会传空字符串 "" 清空）
 
 # ==========================================
 # 🤖 【全新赋能】租户 Bot 一键化自动化脚本接口
