@@ -104,6 +104,7 @@ def _get_existing_columns(cursor, table_name: str):
 
 def init_db():
     with get_db_connection() as (conn, cursor):  
+        # 1. 初始化用户表
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -122,6 +123,7 @@ def init_db():
             """
         ) 
 
+        # 2. 初始化卡片表（★ 已补齐 tg_message_id、created_at、updated_at）
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS cards (
@@ -132,17 +134,21 @@ def init_db():
                 media_type TEXT DEFAULT 'photo',
                 local_media_url TEXT,
                 tg_file_id TEXT,
+                tg_message_id TEXT,  -- 🚀 补齐母车消息ID
                 content TEXT,
                 buttons TEXT,
                 views INTEGER DEFAULT 0,
                 shares INTEGER DEFAULT 0,
                 likes INTEGER DEFAULT 0,
                 clicks INTEGER DEFAULT 0,
-                img TEXT
+                img TEXT,
+                created_at INTEGER DEFAULT 0, -- ⏱️ 新增：创建时间戳
+                updated_at INTEGER DEFAULT 0  -- ⏱️ 新增：最后修改时间戳（排序命根子）
             )
             """
         ) 
 
+        # 3. 初始化订单表
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS orders (
@@ -156,6 +162,7 @@ def init_db():
             """
         ) 
 
+        # 4. 初始化媒体全局缓存表
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS media_cache (
@@ -167,6 +174,7 @@ def init_db():
             """
         ) 
 
+        # 5. 初始化系统配置表
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS system_settings (
@@ -176,6 +184,7 @@ def init_db():
             """
         ) 
 
+        # 载入系统全局公告
         try:
             cursor.execute("SELECT value FROM system_settings WHERE key = %s", ('announcement',))
             row = cursor.fetchone()
@@ -185,6 +194,7 @@ def init_db():
         except Exception:
             pass 
 
+        # 🔄 【用户表】动态在线热升级机制
         users_columns = _get_existing_columns(cursor, "users")
         for name, metadata in {
             "id": "TEXT",
@@ -212,6 +222,7 @@ def init_db():
                 """
             ) 
 
+        # 🔄 【卡片表】动态在线热升级机制（★ 已追加新字段的自动热扩容）
         cards_columns = _get_existing_columns(cursor, "cards")
         for name, metadata in {
             "user_id": "TEXT",
@@ -220,6 +231,8 @@ def init_db():
             "tg_file_id": "TEXT",
             "img": "TEXT",
             "tg_message_id": "TEXT",  
+            "created_at": "INTEGER DEFAULT 0",  # 🚀 老数据库会自动热追加此字段
+            "updated_at": "INTEGER DEFAULT 0",  # 🚀 老数据库会自动热追加此字段
         }.items():
             if name not in cards_columns:
                 try:
@@ -246,7 +259,7 @@ def init_db():
 # ==============================================================================
 def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
     """
-    ⭐完美原生发布 Inline Handler（完美对齐发信 Bot，支持相对图片路径自动修补与 HTML 容错自愈）
+    ⭐完美原生发布 Inline Handler（硬核升级：完美支持 file_id 秒发机制、多媒体精准匹配与动态兜底）
     """
     DEFAULT_BOT_TOKEN = os.getenv("BOT_TOKEN")
     current_use_token = DEFAULT_BOT_TOKEN 
@@ -260,7 +273,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
 
     print(f"[Inline触发] 收到内联查询: query='{query_text}', 路由租户ID(tenant_id)={tenant_id}")
 
-    # 1. 👑 【核心对齐】：根据进站 Webhook 路由精准锁定收信 Bot 令牌，彻底解决多端冲突转圈
+    # 1. 👑 【核心对齐】：精确锁定收信 Bot 令牌
     if tenant_id:
         try:
             with get_db_connection() as (_, cursor):
@@ -286,12 +299,13 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
     if not card_id:
         return None 
 
-    title = content = img = buttons_raw = media_type = user_id = None 
+    title = content = img = buttons_raw = media_type = user_id = tg_file_id = None 
 
     try:
         with get_db_connection() as (_, cursor):
+            # 🔍 【升级】：顺手把预热好的 tg_file_id 从卡片表里捞出来
             cursor.execute(
-                "SELECT title, content, img, buttons, media_type, user_id FROM cards WHERE id = %s",
+                "SELECT title, content, img, buttons, media_type, user_id, tg_file_id FROM cards WHERE id = %s",
                 (card_id,)
             )
             row = cursor.fetchone()
@@ -299,12 +313,12 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
             if not row:
                 return send_inline_empty(query_id, current_use_token, "卡片不存在或已删除")
 
-            title, content, img, buttons_raw, media_type, user_id = row 
+            title, content, img, buttons_raw, media_type, user_id, tg_file_id = row 
     except Exception as e:
         print("[DB错误]", e)
         return send_inline_empty(query_id, current_use_token, "系统数据加载失败") 
 
-    # 3. 🖼️ 【路径智能修补】：防止本地相对路径（如 /uploads/xxx）导致 TG 抓取不到预览而产生无限转圈
+    # 3. 🖼️ 【路径智能修补】：为兜底方案准备公网绝对路径
     has_media = bool(img and str(img).strip())
     if has_media:
         img_str = str(img).strip()
@@ -314,7 +328,6 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
             if img_str.startswith("api/"):
                 img_str = img_str[4:]
             img = f"{base_url}/{img_str}"
-            print(f"[图片路径自愈] 相对路径已修补为公网绝对URL: {img}")
 
     try:
         buttons_data = json.loads(buttons_raw or "[]")
@@ -332,18 +345,55 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
     caption = truncate_caption(clean_html, limit=limit) 
 
     result_id = f"card_{card_id}_{int(time.time())}" 
+    tg_file_id_str = str(tg_file_id or "").strip()
 
+    # 4. 🚀 【核心逻辑重构】：根据是否有 file_id 以及媒体类型进行精准下发
     if has_media:
-        inline_result = {
-            "type": "photo",
-            "id": result_id,
-            "title": title or "精美可视化卡片",
-            "photo_url": img,
-            "thumb_url": img,
-            "caption": caption,
-            "parse_mode": "HTML"
-        } 
+        if tg_file_id_str:
+            # ⚡ 黄金链路：拥有预热好的 file_id，采用 TG 官方 Cached 机制，秒级下发，永不转圈！
+            norm_media = str(media_type or 'photo').lower().strip()
+            
+            if norm_media == "video":
+                inline_result = {
+                    "type": "video",
+                    "id": result_id,
+                    "video_file_id": tg_file_id_str, # 🎬 核心字段
+                    "title": title or "精美可视化视频卡片",
+                    "caption": caption,
+                    "parse_mode": "HTML"
+                }
+            elif norm_media == "gif":
+                inline_result = {
+                    "type": "gif",
+                    "id": result_id,
+                    "gif_file_id": tg_file_id_str,   # 动图核心字段
+                    "title": title or "精美动态卡片",
+                    "caption": caption,
+                    "parse_mode": "HTML"
+                }
+            else:
+                inline_result = {
+                    "type": "photo",
+                    "id": result_id,
+                    "photo_file_id": tg_file_id_str, # 📸 图片核心字段
+                    "title": title or "精美可视化卡片",
+                    "caption": caption,
+                    "parse_mode": "HTML"
+                }
+        else:
+            # 🔄 纯净退路：针对历史遗留无 file_id 的卡片，无缝降级回绝对 URL 爬取模式
+            print(f"[⚠️ 内联降级兜底] 卡片 {card_id} 缺失 tg_file_id，自动切换回公网 URL 抓取模式...")
+            inline_result = {
+                "type": "photo",
+                "id": result_id,
+                "title": title or "精美可视化卡片",
+                "photo_url": img,
+                "thumb_url": img,
+                "caption": caption,
+                "parse_mode": "HTML"
+            } 
     else:
+        # 文本卡片保持原本的 article 逻辑不变
         inline_result = {
             "type": "article",
             "id": result_id,
@@ -365,7 +415,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
         "is_personal": True
     } 
 
-    # 4. 🚀 【硬核自愈发信层】：若用户输入了导致 HTML 乱序未闭合的排版，TG 返回 400 时瞬间自动脱钩降级，绝不转圈！
+    # 5. 🚀 【硬核自愈发信层】（保持不变）
     try:
         res = requests.post(
             f"https://api.telegram.org/bot{current_use_token}/answerInlineQuery",
@@ -373,10 +423,8 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
             timeout=3
         )
         
-        # 降级自愈触发点：如果是 HTML 解析错误导致的失败，直接剥离 parse_mode 重新下发
         if not res.ok and ("parse" in res.text.lower() or "entity" in res.text.lower() or "entities" in res.text.lower()):
             print(f"[⚠️ HTML格式自愈] 检测到排版引发 HTML 语法崩溃，正在启动免解析无痕降级重试...")
-            
             if "parse_mode" in inline_result:
                 inline_result["parse_mode"] = None
             if "input_message_content" in inline_result and "parse_mode" in inline_result["input_message_content"]:
@@ -398,6 +446,39 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
 
     
 init_db() 
+
+# 1. 初始化数据库表结构
+init_db() 
+
+# 2. ⚓ 【主母舰系统自动化中心】服务器启动时，自动把主 Bot 的 Webhook 牢牢锚定，彻底告别浏览器手动访问！
+def auto_align_master_bot_webhook():
+    master_token = os.getenv("BOT_TOKEN")
+    if not master_token:
+        print("⚠️ [系统警告] 未检测到环境变量 BOT_TOKEN，主母舰全自动网关无法初始化！")
+        return
+
+    # 对应你代码里定义的无 tenant_id 的中央路由：@app.post("/tg/webhook")
+    master_webhook_url = f"{API_BASE_URL.rstrip('/')}/tg/webhook"
+    print(f"⚓ [主舰自检] 正在尝试为中央主 Bot 自动注册公网网关: {master_webhook_url} ...")
+    
+    try:
+        res = requests.post(
+            f"https://api.telegram.org/bot{master_token}/setWebhook",
+            json={
+                "url": master_webhook_url, 
+                "allowed_updates": ["inline_query", "message", "pre_checkout_query"] # 连同星星支付、内联一并全自动监听
+            },
+            timeout=5
+        )
+        if res.ok:
+            print(f"🟢 [主舰自愈成功] 中央主 Bot Webhook 已经完美全自动对齐！网关：{master_webhook_url}")
+        else:
+            print(f"❌ [主舰自愈失败] TG官方拒绝了主网关注册: {res.text}")
+    except Exception as e:
+        print(f"❌ [主舰自愈异常] 连接 Telegram 官方服务器超时或失败: {e}")
+
+# 顺轨执行主舰自愈（这里开启一个线程或者直接执行，由于是启动时执行一次，直接执行即可）
+auto_align_master_bot_webhook()
 
 # ==========================================
 # 💰 智能计价与后台调控中心（统一集权于内置主Bot）
@@ -744,6 +825,78 @@ def _compress_video(input_path: str, output_path: str):
 def _build_upload_urls(filename: str) -> str:
     return f"https://www.kongjing.online/uploads/{filename}"
 
+def warm_telegram_media_cache(bot_token: str, chat_id: str, media_url: str, media_type: str) -> Optional[str]:
+    """
+    让 Bot 主动向用户私聊投递媒体文件，拦截并提取 Telegram 官方的 file_id 缓存凭证，随后无感销毁
+    """
+    if not bot_token or not media_url:
+        return None
+    try:
+        # 兼容性自愈：确保是绝对网络路径
+        if not (media_url.startswith("http://") or media_url.startswith("https://")):
+            base_url = os.getenv("API_BASE_URL", "https://www.kongjing.online").rstrip("/")
+            media_url = f"{base_url}/{media_url.lstrip('/')}"
+
+        # 针对图片、视频、GIF，调用不同的官方专属畅行通道
+        # 💡 核心优化：追加 "disable_notification": True，让用户手机完全不震动、不发出声音
+        if media_type == 'video':
+            api_url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+            payload = {
+                "chat_id": chat_id, 
+                "video": media_url, 
+                "caption": "⚡ [空境流媒体] 正在为您全自动构建高质视频分布式缓存...",
+                "disable_notification": True
+            }
+        elif media_type == 'gif':
+            api_url = f"https://api.telegram.org/bot{bot_token}/sendAnimation"
+            payload = {
+                "chat_id": chat_id, 
+                "animation": media_url, 
+                "caption": "⚡ [空境流媒体] 正在为您全自动构建动态GIF多路缓存...",
+                "disable_notification": True
+            }
+        else:
+            api_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+            payload = {
+                "chat_id": chat_id, 
+                "photo": media_url, 
+                "caption": "⚡ [空境流媒体] 您的专属秒刷级图片缓存已成功部署！",
+                "disable_notification": True
+            }
+
+        res = requests.post(api_url, json=payload, timeout=12) # 适当放宽超时，因为TG下载大视频需要时间
+        if res.ok:
+            res_data = res.json()
+            result = res_data.get("result", {})
+            
+            # 1. 精准剥离不同媒体类型的专属 file_id
+            file_id = None
+            if media_type == 'video':
+                file_id = result.get("video", {}).get("file_id")
+            elif media_type == 'gif':
+                file_id = result.get("animation", {}).get("file_id")
+            else:
+                photos = result.get("photo", [])
+                file_id = photos[-1].get("file_id") if photos else None # 取最高画质的原图
+
+            # 2. 🚀【过河拆桥：核心无感化逻辑】
+            # 既然 file_id 已经安全拿到，立刻远程抹除刚刚发送的测试消息，不留痕迹
+            message_id = result.get("message_id")
+            if message_id:
+                try:
+                    delete_url = f"https://api.telegram.org/bot{bot_token}/deleteMessage"
+                    requests.post(delete_url, json={"chat_id": chat_id, "message_id": message_id}, timeout=3)
+                except Exception as del_err:
+                    print(f"⚠️ [缓存预热] 擦除残留消息偶发失败: {del_err}")
+
+            if file_id:
+                print(f"🔥 [缓存捕获成功] 成功拦截到专属媒体({media_type})的官方加密 file_id: {file_id}")
+                return file_id
+                
+    except Exception as e:
+        print(f"⚠️ [缓存预热降级] 捕获 file_id 偶发性失败（不影响基础存储事务）: {e}")
+    return None
+
 
 # -----------------------------
 # 公开统计接口（无鉴权）
@@ -873,9 +1026,20 @@ def _merge_and_compress_chunks(upload_id: str, filename: str, total_chunks: int)
         elif ext == '.gif':
             _compress_gif(merged_path, final_path)
         elif ext in ['.mp4', '.mov']:
+            # 🔥 【核心防伪加入】：在 merged_path（刚合并完的源文件）上重拳出击
+            # 如果校验失败，直接抛出异常，利用外层的 except 阻断并清理临时目录
+            if not _validate_video_with_ffprobe(merged_path):
+                raise ValueError("视频真伪校验失败：文件损坏或未检测到合法的视频轨道！")
+                
+            # 只有通过了 ffprobe 铁面无私的检查，才配消耗服务器珍贵的 CPU 去压缩
             _compress_video(merged_path, final_path)
         else:
             shutil.move(merged_path, final_path)
+    except Exception as exc:
+        # 确保万一出错时，能把可能已经生成的 final_path 清理掉
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        raise exc  # 继续向上抛出，让外层的 FastAPI 捕获并返回 500
     finally:
         shutil.rmtree(chunk_dir, ignore_errors=True)
 
@@ -984,22 +1148,18 @@ def upload_file(file: UploadFile = File(...)):
     filename_lower = file.filename.lower()
     content_type_lower = (file.content_type or "").lower()
 
-    # 1. 基础大类过滤
+    # 1. 🛡️ 基础大类过滤（彻底移除 is_video 校验，把视频彻底关在门外）
     is_image = content_type_lower.startswith("image/")
-    is_video = content_type_lower.startswith("video/")
     is_gif = filename_lower.endswith('.gif') or content_type_lower == 'image/gif'
     
-    if not (is_image or is_video or is_gif):
-        raise HTTPException(status_code=400, detail="仅支持图片、视频和 GIF 上传")
+    if not (is_image or is_gif):
+        raise HTTPException(status_code=400, detail="仅支持图片和 GIF 上传（视频请走分片上传接口）")
 
-    # 2. 提取并规范化后缀
+    # 2. ⚙️ 提取并规范化后缀
     ext = os.path.splitext(filename_lower)[1]
-    if is_image:
-        if ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
-            ext = ".jpg"
-    elif is_video or is_gif:
-        if ext not in [".mp4", ".webm", ".mov", ".avi", ".gif", ".webp"]:
-            ext = ".mp4"
+    if ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
+        # 如果是符合 GIF 大类但后缀奇葩，强制归一化为 .gif，其余图片默认 .jpg
+        ext = ".gif" if is_gif else ".jpg"
 
     file_name = f"{int(time.time())}_{random.randint(100000, 999999)}{ext}"
     file_path = os.path.join(UPLOAD_DIR, file_name)
@@ -1010,21 +1170,16 @@ def upload_file(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, f)
             
         # ==========================================
-        # 🔥 【核心新增：深层真实校验】
+        # 🔥 【核心深层真实校验】
         # ==========================================
-        if is_image or is_gif:
-            try:
-                # Pillow 会尝试解码文件流，如果是伪造的虚假图片，这里会直接崩溃
-                with Image.open(file_path) as verify_img:
-                    verify_img.verify() # 深入校验图片完整性
-            except Exception:
-                if os.path.exists(file_path):
-                    os.remove(file_path) # 校验失败，立刻销毁伪造文件
-                raise HTTPException(status_code=400, detail="文件损坏或非真实的合法图片/GIF格式！")
-        
-        elif is_video:
-            # 视频使用你已有的 ffmpeg/ffprobe 逻辑，在之后的合并或者这里检测是否合法
-            pass
+        try:
+            # Pillow 会尝试解码文件流，如果是黑客伪造的虚假图片/GIF，这里会直接崩溃
+            with Image.open(file_path) as verify_img:
+                verify_img.verify() # 深入校验图片完整性
+        except Exception:
+            if os.path.exists(file_path):
+                os.remove(file_path) # 校验失败，立刻销毁伪造文件
+            raise HTTPException(status_code=400, detail="文件损坏或非真实的合法图片/GIF格式！")
             
     except HTTPException:
         raise
@@ -1159,47 +1314,6 @@ def bind_tenant_custom_bot(data: BindBotInput, current_user: dict = Depends(get_
 # ==========================================
 
 # 1. 获取所有卡片列表
-@app.get("/cards")
-def get_cards(current_user: dict = Depends(get_current_tg_user)):
-    user_id = str(current_user.get("id"))
-
-    with get_db_connection() as (_, cursor):
-        # 兼容性设计：如果是超级管理员账号，允许查看所有人的卡片；否则只查自己绑定的卡片
-        if user_id == '8368521045':
-            query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards"
-            cursor.execute(query)
-        else:
-            query = "SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type FROM cards WHERE user_id = %s"
-            cursor.execute(query, (user_id,))
-        rows = cursor.fetchall()
-
-    result = []
-    for row in rows:
-        try:
-            parsed_buttons = json.loads(row[5] or "[]")
-        except Exception:
-            parsed_buttons = []
-
-        result.append({
-            "id": row[0],
-            "title": row[1],
-            "status": row[2],
-            "img": row[3],
-            "image": row[3],
-            "content": row[4],
-            "buttons": parsed_buttons,
-            "user_id": row[10],
-            "media_type": row[11] or 'photo',
-            "analytics": {
-                "views": row[6],
-                "shares": row[7],
-                "likes": row[8],
-                "clicks": row[9],
-            },
-        })
-    return result
-
-# 2. 保存/更新卡片（【修复核心】：兼具内容模型与身份校验）
 @app.post("/cards")
 def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)):
     target_photo = data.img if data.img else (data.image if data.image else "")
@@ -1224,18 +1338,24 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
     media_type = str(data.media_type).strip() if data.media_type else 'photo'
     if media_type not in ['photo', 'video', 'gif']:
         media_type = 'photo'
-
+        
+    current_timestamp = int(time.time()) # ⏱️ 捕获当前统一的系统秒级时间戳
     card_id = str(data.id).strip() if data.id else ""
 
     try:
         with get_db_connection() as (_, cursor):
+            # ⭐ 先行提取当前用户或系统的专属 Bot Token 凭证，供预热引擎使用
+            cursor.execute("SELECT bot_token FROM users WHERE telegram_id = %s", (incoming_user_id,))
+            u_bot = cursor.fetchone()
+            active_bot_token = str(u_bot[0]).strip() if (u_bot and u_bot[0]) else BOT_TOKEN
+
             if card_id:
-                # 🔍 核心变动：追加查询 tg_message_id
-                cursor.execute("SELECT status, img, media_type, user_id, tg_message_id FROM cards WHERE id = %s", (card_id,))
+                # 🔍 查询当前卡片的各种核心状态属性
+                cursor.execute("SELECT status, img, media_type, user_id, tg_message_id, tg_file_id FROM cards WHERE id = %s", (card_id,))
                 existing_card = cursor.fetchone()
                 
                 if existing_card:
-                    current_status, old_img, old_media_type, owner_id, tg_message_id = existing_card
+                    current_status, old_img, old_media_type, owner_id, tg_message_id, old_tg_file_id = existing_card
                     
                     if owner_id != incoming_user_id and incoming_user_id != '8368521045':
                         raise HTTPException(status_code=403, detail="您没有修改此卡片的权限")
@@ -1247,28 +1367,25 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                                 detail="根据 Telegram 官方规则，已发布的卡片无法更改媒体文件（图片/视频/GIF）。仅支持修改文字内容和按钮！"
                             )
                         
-                        # 1. 更新本地数据库记录
+                        # 已发布的卡片图片没变，直接继承老 file_id
+                        final_tg_file_id = old_tg_file_id
+                        
+                        # 1. ⏱️ 更新本地数据库记录（★已补齐 updated_at 字段对齐 5 个占位符）
                         cursor.execute(
                             """
                             UPDATE cards
-                            SET title = %s, content = %s, buttons = %s
+                            SET title = %s, content = %s, buttons = %s, updated_at = %s
                             WHERE id = %s
                             """,
-                            (data.title, data.content, db_buttons_str, card_id),
+                            (data.title, data.content, db_buttons_str, current_timestamp, card_id),
                         )
                         
-                        # 2. 🚀 核心大动作：如果存在消息 ID，立刻远程同步修改用户私聊窗口里的那张卡片
+                        # 2. 🚀 远程同步修改用户私聊窗口里的那张卡片
                         if tg_message_id:
-                            # 查询发送该卡片应该持有的 Bot Token 凭证
-                            cursor.execute("SELECT bot_token FROM users WHERE telegram_id = %s", (incoming_user_id,))
-                            u_bot = cursor.fetchone()
-                            bot_token = str(u_bot[0]).strip() if (u_bot and u_bot[0]) else BOT_TOKEN
-                            
                             clean_keyboard = smart_clean_inline_keyboard(db_buttons if isinstance(db_buttons, list) else [], card_id)
                             reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
                             clean_html_content = sanitize_for_telegram((data.content or "").strip())
-                            
-                            # 判定是用修改文字还是修改多媒体描述接口
+         
                             has_media = db_img != ""
                             api_method = "editMessageCaption" if has_media else "editMessageText"
                             text_key = "caption" if has_media else "text"
@@ -1283,35 +1400,46 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                                 payload["reply_markup"] = reply_markup
                                 
                             try:
-                                requests.post(f"https://api.telegram.org/bot{bot_token}/{api_method}", json=payload, timeout=10)
+                                requests.post(f"https://api.telegram.org/bot{active_bot_token}/{api_method}", json=payload, timeout=10)
                             except Exception as tg_edit_err:
                                 print(f"[错误] 远程同步编辑 TG 母车消息失败: {str(tg_edit_err)}")
                     else:
-                        # 草稿状态：自由修改
+                        # ✨ 草稿状态下：如果检测到换了新图，或者之前没有建立过缓存，触发全自动预热拦截
+                        if db_img and (db_img != str(old_img or "").strip() or media_type != old_media_type or not old_tg_file_id):
+                            final_tg_file_id = warm_telegram_media_cache(active_bot_token, incoming_user_id, db_img, media_type) or old_tg_file_id
+                        else:
+                            final_tg_file_id = old_tg_file_id
+
+                        # 3. ⏱️ 草稿状态更新：（★已补齐 updated_at 字段对齐 9 个占位符）
                         cursor.execute(
                             """
                             UPDATE cards
-                            SET title = %s, content = %s, img = %s, buttons = %s, media_type = %s, user_id = %s
+                            SET title = %s, content = %s, img = %s, buttons = %s, media_type = %s, user_id = %s, tg_file_id = %s, updated_at = %s
                             WHERE id = %s
                             """,
-                            (data.title, data.content, db_img, db_buttons_str, media_type, incoming_user_id, card_id),
+                            (data.title, data.content, db_img, db_buttons_str, media_type, incoming_user_id, final_tg_file_id, current_timestamp, card_id),
                         )
                 else:
+                    # 有传入卡片ID，但数据库没记录（视作新卡片创建），触发预热
+                    final_tg_file_id = warm_telegram_media_cache(active_bot_token, incoming_user_id, db_img, media_type) if db_img else None
+                    # 🛠️ 语法修复：闭合了 execute 的括号
                     cursor.execute(
                         """
-                        INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id, tg_file_id, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id),
+                        (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id, final_tg_file_id, current_timestamp, current_timestamp),
                     )
             else:
+                # 全新无卡片ID，生成全新卡片ID，触发预热
                 card_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+                final_tg_file_id = warm_telegram_media_cache(active_bot_token, incoming_user_id, db_img, media_type) if db_img else None
                 cursor.execute(
                     """
-                    INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO cards (id, title, content, img, buttons, media_type, status, user_id, tg_file_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id),
+                    (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id, final_tg_file_id, current_timestamp, current_timestamp),
                 )
     except HTTPException:
         raise
@@ -1319,6 +1447,51 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
         raise HTTPException(status_code=500, detail=f"数据库保存异常: {str(e)}")
 
     return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
+
+@app.get("/cards")
+def get_cards(current_user: dict = Depends(get_current_tg_user)):
+    user_id = str(current_user.get("id")).strip()
+
+    with get_db_connection() as (_, cursor):
+        # ⏱️ 【核心升级】：在 SQL 最后强行加上 ORDER BY updated_at DESC
+        # 这样当你保存、或者预热完新卡片时，它在小程序列表里会雷打不动地出现在最上面！
+        query = """
+            SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type 
+            FROM cards 
+            WHERE user_id = %s
+            ORDER BY updated_at DESC
+        """
+        cursor.execute(query, (user_id,))
+        rows = cursor.fetchall()
+
+    result = []
+    for row in rows:
+        try:
+            parsed_buttons = json.loads(row[5] or "[]")
+        except Exception:
+            parsed_buttons = []
+
+        result.append({
+            "id": row[0],
+            "title": row[1],
+            "status": row[2],
+            "img": row[3],
+            "image": row[3],  # 保持你原有的双重保障，兼容前端习惯
+            "content": row[4],
+            "buttons": parsed_buttons,
+            "user_id": row[10],
+            "media_type": row[11] or 'photo',
+            "analytics": {
+                "views": row[6],
+                "shares": row[7],
+                "likes": row[8],
+                "clicks": row[9],
+            },
+        })
+        
+    # 🚀 雷打不动返回你前端最喜欢的裸数组格式，405 报错瞬间烟消云散！
+    return result
+
 
 
 @app.post("/cards/{card_id}")
@@ -2012,7 +2185,30 @@ def get_card(card_id: str):
     }
 
 @app.delete("/cards/{card_id}")
-def delete_card(card_id: str):
-    with get_db_connection() as (_, cursor):
-        cursor.execute("DELETE FROM cards WHERE id = %s", (card_id,))
-    return {"code": 200, "status": "success", "msg": "删除成功", "message": "删除成功"}
+def delete_card(card_id: str, current_user: dict = Depends(get_current_tg_user)):
+    incoming_user_id = str(current_user.get("id")).strip()
+    
+    try:
+        with get_db_connection() as (conn, cursor):
+            # 🔎 1. 先查出这张卡片到底是谁的
+            cursor.execute("SELECT user_id FROM cards WHERE id = %s", (card_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="该卡片不存在或已被删除")
+            
+            owner_id = str(row[0]).strip()
+            
+            # 🛡️ 2. 鉴权校验：只有卡片拥有者，或者是你自己的管理员ID（8368521045）才有资格删除
+            if owner_id != incoming_user_id and incoming_user_id != '8368521045':
+                raise HTTPException(status_code=403, detail="对不起，您没有删除此卡片的控制权限")
+            
+            # 🗑️ 3. 校验通过，允许安全执行切除手术
+            cursor.execute("DELETE FROM cards WHERE id = %s", (card_id,))
+            conn.commit() # 🚀 显式提交事务，确保硬盘数据同步擦除
+            
+        return {"code": 200, "status": "success", "msg": "卡片已安全从云端销毁", "message": "删除成功"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"安全切除事务异常: {str(e)}")

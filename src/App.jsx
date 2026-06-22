@@ -1470,54 +1470,108 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   });
 
   // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
-  const handleMediaChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
+const handleMediaChange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
 
-    const previewUrl = URL.createObjectURL(file);
-    
-    // 判断媒体类型：photo、video、gif
-    let mediaType = 'photo';
-    if (file.type.startsWith('video/')) {
-      mediaType = 'video';
-    } else if (file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif') {
-      mediaType = 'gif';
-    }
+  const previewUrl = URL.createObjectURL(file);
+  
+  // 判断媒体类型：photo、video、gif
+  let mediaType = 'photo';
+  if (file.type.startsWith('video/')) {
+    mediaType = 'video';
+  } else if (file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif') {
+    mediaType = 'gif';
+  }
 
-    // 设置本地预览状态，previewUrl 只用于前端预览，不保存到数据库
-    setMediaFile({ previewUrl, type: mediaType, uploading: true, remoteUrl: null });
-    const formData = new FormData();
-    formData.append('file', file);
+  // 设置本地预览状态
+  setMediaFile({ previewUrl, type: mediaType, uploading: true, remoteUrl: null });
 
-    try {
+  try {
+    // 🎬 【新增分流逻辑】：如果是视频，启动强悍的分片上传机制
+    if (mediaType === 'video') {
+      const CHUNK_SIZE = 2 * 1024 * 1024; // 规定每片大小为 2MB
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      // 生成一个本次上传的唯一标识
+      const uploadId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      let finalRemoteUrl = null;
+
+      // 循环切片并串行发送给后端
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const start = chunkIndex * CHUNK_SIZE;
+        const end = Math.min(file.size, start + CHUNK_SIZE);
+        const chunk = file.slice(start, end);
+
+        const formData = new FormData();
+        // 严格对齐后端要求的参数名
+        formData.append('file_chunk', chunk, file.name); 
+        formData.append('chunk_index', chunkIndex);
+        formData.append('total_chunks', totalChunks);
+        formData.append('upload_id', uploadId);
+        formData.append('filename', file.name);
+
+        const response = await fetch(`${BASE_URL}/upload/chunk`, {
+          method: 'POST',
+          headers: getAuthHeaders(), // 注意：确保这里没有强行指定 'Content-Type': 'application/json'
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`视频分片 [${chunkIndex + 1}/${totalChunks}] 上传失败`);
+        }
+
+        const data = await response.json();
+        // 到了最后一片，后端会完成合并压缩并吐出最终的 url
+        if (chunkIndex === totalChunks - 1) {
+          if (!data?.url) throw new Error('后端合并后未能返回有效视频公网地址');
+          finalRemoteUrl = data.url;
+        }
+      }
+
+      // 视频分片大功告成，更新状态
+      setMediaFile((prev) => ({
+        ...prev,
+        remoteUrl: finalRemoteUrl,
+        previewUrl: prev.previewUrl,
+        uploading: false,
+      }));
+
+    } else {
+      // 🖼️ 如果是普通图片/GIF，保持你原本的常规上传通道不变
+      const formData = new FormData();
+      formData.append('file', file);
+
       const response = await fetch(`${BASE_URL}/upload`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: formData,
       });
+
       if (!response.ok) {
-        throw new Error(`上传失败：${response.status}`);
+        throw new Error(`图片上传失败：${response.status}`);
       }
 
       const data = await response.json();
       if (!data?.url) {
-        throw new Error('后端返回无效上传地址');
+        throw new Error('后端返回无效图片上传地址');
       }
 
-      // 上传完成后，将公网 URL 保存到 remoteUrl，不再需要 previewUrl
       setMediaFile((prev) => ({
         ...prev,
-        remoteUrl: data.url,  // 公网地址，用于数据库 and 发送到 Telegram
-        previewUrl: prev.previewUrl,  // 保留 previewUrl 用于显示
+        remoteUrl: data.url,
+        previewUrl: prev.previewUrl,
         uploading: false,
       }));
-    } catch (uploadError) {
-      console.error('图片上传失败:', uploadError);
-      alert('图片上传失败，请重试。');
-      // 上传失败时，清除 mediaFile 防止误保存
-      setMediaFile(null);
     }
-  };
+
+  } catch (uploadError) {
+    console.error('媒体上传失败:', uploadError);
+    alert('媒体文件上传失败，请重试。');
+    // 上传失败时，清除 mediaFile 防止误保存
+    setMediaFile(null);
+  }
+};
 
   const triggerPublish = () => {
     if (!editor) return;
