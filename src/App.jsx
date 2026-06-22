@@ -1002,7 +1002,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                     {card.media_type === 'video' ? (
                       <div className="w-20 h-20 rounded-xl shrink-0 bg-zinc-950 relative overflow-hidden border border-gray-100">
                         <video 
-                          src={card.img} 
+                          src={`${card.img}#t=0.001`} 
                           className="w-full h-full object-cover opacity-80" 
                           preload="metadata" 
                           muted 
