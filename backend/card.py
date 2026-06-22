@@ -1456,7 +1456,7 @@ def get_cards(current_user: dict = Depends(get_current_tg_user)):
         # ⏱️ 【核心升级】：在 SQL 最后强行加上 ORDER BY updated_at DESC
         # 这样当你保存、或者预热完新卡片时，它在小程序列表里会雷打不动地出现在最上面！
         query = """
-            SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type 
+            SELECT id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type, updated_at  
             FROM cards 
             WHERE user_id = %s
             ORDER BY updated_at DESC
@@ -1481,6 +1481,7 @@ def get_cards(current_user: dict = Depends(get_current_tg_user)):
             "buttons": parsed_buttons,
             "user_id": row[10],
             "media_type": row[11] or 'photo',
+            "updated_at": row[12],
             "analytics": {
                 "views": row[6],
                 "shares": row[7],

@@ -777,7 +777,18 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
    1. 首页组件 (HomeScreen)
    ========================================================================== */
 function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const formatCardTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp * 1000);
+    return new Intl.DateTimeFormat(i18n.language || 'zh', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(date);
+  };  
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
@@ -984,22 +995,61 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
               const isExpanded = activeCardId === card.id;
               return (
                 <div key={card.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
+                  {/* 卡片主内容点击区域 */}
                   <div className="flex gap-4 p-3 cursor-pointer active:bg-gray-50/80 transition-colors" onClick={() => toggleCardActions(card.id)}>
-                    {card.media_type === 'video' ? 
-                      <video src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" />
-                    : card.media_type === 'gif' ?
-                      < img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
-                      : < img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
-                    }
-                    <div className="flex-1 flex flex-col justify-between py-1">
-                      <p className="font-bold text-sm text-gray-800 line-clamp-2">{card.title || t('admin_unnamed_card')}</p >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1"><FaEye /> {card.analytics?.views || 0}</span>
-                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === '已发布' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>{card.status}</span>
+                    
+                    {/* 🎬 视频/图片缩略图完美兼容区 */}
+                    {card.media_type === 'video' ? (
+                      <div className="w-20 h-20 rounded-xl shrink-0 bg-zinc-950 relative overflow-hidden border border-gray-100">
+                        <video 
+                          src={card.img} 
+                          className="w-full h-full object-cover opacity-80" 
+                          preload="metadata" 
+                          muted 
+                          playsInline
+                        />
+                        {/* 居中叠加极简工业风播放键 */}
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                          <svg className="w-4 h-4 text-white/90 fill-current" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z"/>
+                          </svg>
+                        </div>
                       </div>
-                    </div>
+                    ) : card.media_type === 'gif' ? (
+                      < img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                    ) : (
+                      < img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                    )}
+
+                    {/* 📝 右侧文字、数据、时间戳与状态区 */}
+                    <div className="flex-1 flex flex-col justify-between py-1">
+                      <p className="font-bold text-sm text-gray-800 line-clamp-2">
+                        {card.title || t('admin_unnamed_card')}
+                      </p >
+                      
+                      <div className="flex items-center justify-between">
+                        {/* 浏览量 */}
+                        <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1">
+                          <FaEye /> {card.analytics?.views || 0}
+                        </span>
+                        
+                        {/* 时间戳与状态标签（完美闭合） */}
+                        <div className="flex items-center gap-2">
+                          {card.updated_at && (
+                            <span className="text-[10px] text-gray-400 font-mono tracking-tighter">
+                              {formatCardTime(card.updated_at)}
+                            </span>
+                          )}
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === '已发布' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
+                            {card.status}
+                          </span>
+                        </div>
+                      </div>
+                    </div> {/* 💡 之前你就是漏掉了这行，导致几百行报错！ */}
+
                   </div>
 
+                  {/* 展开的操作面板 */}
                   <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
                     <button onClick={() => onNavigatePreview(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
                       <FaEye size={11} className="text-gray-400" /> {t('common_preview')}
