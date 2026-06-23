@@ -67,6 +67,15 @@ const resources = {
       home_publish_failed_tip: "发布请求失败，请确保 Python 接口已正确部署。",
       home_local_mock_title: "【本地模拟发布】未连接到后端。",
       home_btn_count: "内嵌按钮数: ",
+      home_publish_inline: "内联模式",
+      home_publish_direct: "直发消息",
+      home_direct_publish_title: "配置直发目标渠道",
+      home_direct_publish_desc: "卡片将绕过客户端内联选择，由 Bot 直接向指定的公开频道、群组用户名或纯数字 ID 进行无痕投递。",
+      home_target_chat_id: "目标渠道 ID / 用户名",
+      home_selected_count: "项已选中",
+      home_select_all: "全选",
+      home_deselect_all: "取消全选",
+      home_batch_delete_confirm: "确定要批量删除选中的 {{count}} 张卡片吗？",
 
       // === admin 后台管理模块 ===
       admin_dashboard_title: "全局管理后台",
@@ -273,6 +282,15 @@ const resources = {
       home_publish_failed_tip: "Publish request failed. Ensure the Python API is deployed correctly.",
       home_local_mock_title: "【Local Mock】 Not connected to backend.",
       home_btn_count: "Inline Buttons: ",
+      home_publish_inline: "Inline Mode",
+      home_publish_direct: "Direct Message",
+      home_direct_publish_title: "Configure Direct Destination",
+      home_direct_publish_desc: "The card will bypass inline selection and be delivered instantly by the bot to the specified public channel, group username, or chat ID.",
+      home_target_chat_id: "Target Chat ID / Username",
+      home_selected_count: "selected",
+      home_select_all: "Select All",
+      home_deselect_all: "Deselect All",
+      home_batch_delete_confirm: "Are you sure you want to delete the selected {{count}} cards?",
 
       // === admin 后台管理模块 ===
       admin_dashboard_title: "Global Admin Dashboard",

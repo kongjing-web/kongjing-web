@@ -778,6 +778,7 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
    ========================================================================== */
 function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, onNavigateEditor, onNavigateEditSpecific, onNavigatePreview, onNavigateAnalytics, onNavigateRecharge, onNavigateSettings, onNavigateAdmin }) {
   const { t, i18n } = useTranslation();
+  
   const formatCardTime = (timestamp) => {
     if (!timestamp) return '';
     const date = new Date(timestamp * 1000);
@@ -789,98 +790,191 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       hour12: false
     }).format(date);
   };  
+
+  // 基础状态
   const [activeCardId, setActiveCardId] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false); 
   const menuRef = useRef(null);
 
-  // 保留原有 currentUser 状态不变，提供兼容的 `user` 别名以满足旧版逻辑引用
+  // 🚀 核心新增：批量管理与直发投递状态网关
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [selectedCardIds, setSelectedCardIds] = useState([]);
+  const [publishingCardForDirect, setPublishingCardForDirect] = useState(null);
+  const [targetChatId, setTargetChatId] = useState('');
+  
+  // 长按定时器逻辑引用
+  const longPressTimer = useRef(null);
+  const isLongPressTriggered = useRef(false);
+
+  // 用户与权限计算
   const user = currentUser || null;
   const wxUsername = user?.username || t('common_anonymous');
-  const wxRole = user ? (user.role === 'superuser' ? t('home_role_superuser') : t('home_user_regular')) : t('home_not_logged_in');
-  
-  // 👑 【修复 VIP 计算】：后端接口返回 role 和 vip_until，不带有独立的布尔值，在此处进行高精度统一计算
   const isVipUser = user?.role === 'superuser' || user?.role === 'vip' || (user?.vip_until && Number(user.vip_until) > Math.floor(Date.now() / 1000));
   const vipStatus = isVipUser ? t('home_vip_active') : (user ? t('home_user_regular') : t('home_not_logged_in'));
-
-  // 🆔 【修复 ID 兼容】：强力兼容支持新旧 ID 字段 (telegram_id / tg_id)，防止保存设置后解析断裂变成匿名用户
   const telegramInitId = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initDataUnsafe?.user?.id : null;
   const resolvedId = (user && (user.telegram_id || user.tg_id)) ? (user.telegram_id || user.tg_id) : (telegramInitId ? telegramInitId : null);
   const isAnonymous = (user && user.is_anonymous === true) || !resolvedId;
   const displayName = isAnonymous ? t('common_anonymous') : `${t('common_id')}${resolvedId}`;
-  
-  // VIP 标签：只有非匿名用户时展示，同样基于计算后的真实权限状态
   const vipTag = !isAnonymous ? (isVipUser ? 'VIP' : t('home_user_regular')) : null;
-  
-  // 🤖 【Bot 状态灯重构】：彻底抛弃不稳定的 has_bot 依赖，直接用是否有真实的 bot_username 字符串作为高可信绑定标志
-  const botStatus = isAnonymous
-    ? { text: t('home_waiting_auth'), className: 'text-gray-400' }
-    : (user?.bot_username ? { text: `● ${t('home_bound')}@${user?.bot_username}`, className: 'text-emerald-500' } : { text: `○ ${t('home_not_bound')}`, className: 'text-amber-500' });
-  
+  const botStatus = isAnonymous ? { text: t('home_waiting_auth'), className: 'text-gray-400' } : (user?.bot_username ? { text: `● ${t('home_bound')}@${user?.bot_username}`, className: 'text-emerald-500' } : { text: `○ ${t('home_not_bound')}`, className: 'text-amber-500' });
   const isAdmin = user?.role === 'admin' || user?.role === 'superuser';
 
   const toggleCardActions = (id) => {
     setActiveCardId(activeCardId === id ? null : id);
   };
 
-  // 物理删除：对接后端 API
-  const handleDeleteCard = async (id) => {
-    if (window.confirm(t('home_delete_confirm'))) {
+  // ==========================================
+  // ⚡ 长按多选核心自研触发器
+  // ==========================================
+  const handleLongPressStart = (cardId) => {
+    isLongPressTriggered.current = false;
+    longPressTimer.current = setTimeout(() => {
+      isLongPressTriggered.current = true;
+      setIsBatchMode(true);
+      setSelectedCardIds((prev) => {
+        if (prev.includes(cardId)) return prev;
+        return [...prev, cardId];
+      });
+      // 兼容拉起震动
+      if (typeof window !== 'undefined' && window.navigator?.vibrate) {
+        window.navigator.vibrate(50);
+      }
+    }, 700); // 700毫秒判定为长按锁定
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+    }
+  };
+
+  const handleCardClickGrid = (card) => {
+    // 如果长按已经触发，拦截普通的单点展开事件
+    if (isLongPressTriggered.current) {
+      isLongPressTriggered.current = false;
+      return;
+    }
+    
+    if (isBatchMode) {
+      // 批量模式：单点变为勾选/反选
+      if (selectedCardIds.includes(card.id)) {
+        setSelectedCardIds(selectedCardIds.filter(id => id !== card.id));
+      } else {
+        setSelectedCardIds([...selectedCardIds, card.id]);
+      }
+    } else {
+      // 普通模式：切换底栏展开
+      toggleCardActions(card.id);
+    }
+  };
+
+  // ==========================================
+  // 💾 批量物理删除核心网关
+  // ==========================================
+  const handleBatchDelete = async () => {
+    if (selectedCardIds.length === 0) return;
+    
+    const confirmMsg = t('home_batch_delete_confirm', { count: selectedCardIds.length }) || `确定要删除选中的 ${selectedCardIds.length} 张卡片吗？`;
+    if (window.confirm(confirmMsg)) {
       try {
-        const response = await fetch(`${BASE_URL}/cards/${id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders(),
-        });
-        if (response.ok) {
-          setCards(cards.filter(c => c.id !== id));
-          setActiveCardId(null);
-        } else {
-          alert("后端删除失败");
-        }
-      } catch (error) {
-        console.error("删除失败:", error);
-        // 容错处理
-        setCards(cards.filter(c => c.id !== id));
+        // 循环调用单点删除，完美兼容老版后端路由架构
+        await Promise.all(
+          selectedCardIds.map(id =>
+            fetch(`${BASE_URL}/cards/${id}`, {
+              method: 'DELETE',
+              headers: getAuthHeaders(),
+            })
+          )
+        );
+        
+        // 瞬时前端状态裁剪
+        setCards(cards.filter(c => !selectedCardIds.includes(c.id)));
+        setSelectedCardIds([]);
+        setIsBatchMode(false);
         setActiveCardId(null);
+      } catch (error) {
+        console.error("批量删除异常:", error);
+        alert("删除执行完毕，部分卡片可能由于网络波动未被彻底清除，请刷新重试");
+        if (fetchCards) fetchCards();
       }
     }
   };
 
-// 🚀 【完美原生发布】：彻底干掉后端代发 sendMessage，零延迟不转圈
-  const handlePublishToTelegram = async (card) => {
-  if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
-    alert('请在 Telegram 真实环境中打开');
-    return;
-  }
-
-  try {
-    const initData = window.Telegram.WebApp.initData;
-
-    // 直接使用原生 fetch 发送请求
-    const response = await fetch('https://www.kongjing.online/api/publish', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${initData}` // 传递 TG 的身份凭证
-      },
-      body: JSON.stringify({ card_id: card.id })
-    });
-
-    const result = await response.json();
-
-    if (!response.ok || result.status !== 'success') {
-      alert(result.detail || result.message || '激活失败');
+  // ==========================================
+  // 🚀 模式一：Inline Mode (内联分享发布)
+  // ==========================================
+  const handlePublishInline = async (card) => {
+    if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
+      alert('请在 Telegram 真实环境中打开');
       return;
     }
+    try {
+      const initData = window.Telegram.WebApp.initData;
+      const response = await fetch('https://www.kongjing.online/api/publish', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${initData}`
+        },
+        body: JSON.stringify({ card_id: card.id, publish_mode: 'inline' })
+      });
+      const result = await response.json();
 
-    // 后端激活成功后，拉起原生分享
-    const inlineQueryText = `card_${card.id}`;
-    window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
+      if (!response.ok || result.status !== 'success') {
+        alert(result.detail || result.message || '激活失败');
+        return;
+      }
 
-  } catch (error) {
-    console.error("发布失败:", error);
-    alert("网络请求异常，请检查后端服务");
-  }
-};
+      const inlineQueryText = `card_${card.id}`;
+      window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
+    } catch (error) {
+      console.error("内联模式发布失败:", error);
+      alert("网络请求异常，请检查后端服务");
+    }
+  };
+
+  // ==========================================
+  // 👑 模式二：Direct Message (直发消息投递)
+  // ==========================================
+  const handlePublishDirectSubmit = async () => {
+    if (!targetChatId || !targetChatId.trim()) {
+      alert("请输入合法的目标群组用户名、频道 ID 或聊天 ID");
+      return;
+    }
+    if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
+      alert('请在 Telegram 真实环境中打开');
+      return;
+    }
+    try {
+      const initData = window.Telegram.WebApp.initData;
+      const response = await fetch('https://www.kongjing.online/api/publish', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${initData}`
+        },
+        body: JSON.stringify({ 
+          card_id: publishingCardForDirect.id, 
+          publish_mode: 'direct',
+          chat_id: targetChatId.trim()
+        })
+      });
+      const result = await response.json();
+
+      if (!response.ok || result.status !== 'success') {
+        alert(result.detail || result.message || '直发投递失败');
+        return;
+      }
+
+      alert(result.message || '卡片已直接穿透投递到目标渠道！');
+      setPublishingCardForDirect(null);
+      setTargetChatId('');
+      if (fetchCards) fetchCards(); // 刷新卡片状态
+    } catch (error) {
+      console.error("直接发送失败:", error);
+      alert("直发请求失败，请检查网络或后端网关状态");
+    }
+  };
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -893,7 +987,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   }, []);
 
   return (
-    <div className="w-full max-w-md mx-auto bg-slate-50 min-h-screen border-x border-gray-200 relative">
+    <div className="w-full max-w-md mx-auto bg-slate-50 min-h-screen border-x border-gray-200 relative select-none">
       {/* 顶部账号信息头标 */}
       <div className="sticky top-0 w-full bg-white border-b border-gray-100 px-4 py-3 z-40 shadow-sm flex items-center justify-between">
         <div className="relative" ref={menuRef}>
@@ -917,7 +1011,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           </div>
 
           {showUserMenu && (
-            <div className="absolute left-0 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+            <div className="absolute left-0 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-50">
               <button onClick={() => { onNavigateRecharge(); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
                 <FaCoins className="text-amber-500" /> {t('home_recharge')}
               </button>
@@ -939,7 +1033,6 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
         </div>
         <div className="text-right"><span className="text-[10px] bg-slate-100 font-bold text-slate-500 px-2 py-1 rounded-md">{t('home_console_v')}</span></div>
       </div>
-      {/* 注：已将下方冗余的用户信息卡片移除，相关显示已整合至顶部 Header */}
 
       {announcement && (
         <div className="mx-4 mt-3 rounded-2xl border border-amber-300/30 bg-gradient-to-r from-amber-100/80 to-amber-50 p-3 text-sm text-amber-900 flex items-start gap-3">
@@ -948,7 +1041,6 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             <div className="font-bold">{t('home_announcement')}</div>
             <div className="text-xs mt-1">{announcement}</div>
           </div>
-          <div className="text-xs text-amber-800 font-semibold">{t('home_announcement')}</div>
         </div>
       )}
 
@@ -956,28 +1048,24 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
         <div className="mx-4 mt-4 rounded-3xl border border-amber-400/40 bg-gradient-to-r from-amber-100/80 via-yellow-50 to-slate-50 p-4 shadow-lg shadow-amber-200/30">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">{t('home_admin_panel')}</p >
-              <p className="mt-1 text-sm font-bold text-slate-900">{t('home_admin_panel_open')}</p >
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">{t('home_admin_panel')}</p>
+              <p className="mt-1 text-sm font-bold text-slate-900">{t('home_admin_panel_open')}</p>
             </div>
-            <button
-              onClick={onNavigateAdmin}
-              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.15em] text-amber-200 shadow-lg shadow-slate-900/10 hover:bg-slate-800 transition"
-            >
+            <button onClick={onNavigateAdmin} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.15em] text-amber-200 hover:bg-slate-800 transition">
               <FaLock size={14} /> {t('home_enter_admin')}
             </button>
           </div>
-          <p className="mt-3 text-[11px] text-slate-500">{t('home_admin_only_tip')}</p >
         </div>
       )}
 
-      <div className="p-4 pb-12">
-        <p className="text-[11px] text-gray-400 mt-2 mb-3 font-bold uppercase tracking-widest">{t('home_select_type')}</p >
+      <div className="p-4 pb-24">
+        <p className="text-[11px] text-gray-400 mt-2 mb-3 font-bold uppercase tracking-widest">{t('home_select_type')}</p>
         <div className="flex flex-col gap-3 cursor-pointer" onClick={onNavigateEditor}>
           <div className="flex items-center p-4 bg-white border-2 border-blue-500 rounded-2xl gap-4 shadow-sm active:scale-[0.99] transition-all">
             <div className="bg-blue-600 p-3 rounded-xl text-white shadow-md"><FaLayerGroup size={20} /></div>
             <div>
-              <p className="font-bold text-sm">{t('home_native_mode')}</p >
-              <p className="text-xs text-gray-400">{t('home_native_mode_desc')}</p >
+              <p className="font-bold text-sm">{t('home_native_mode')}</p>
+              <p className="text-xs text-gray-400">{t('home_native_mode_desc')}</p>
             </div>
           </div>
         </div>
@@ -993,78 +1081,99 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           <div className="flex flex-col gap-3">
             {cards.map((card) => {
               const isExpanded = activeCardId === card.id;
+              const isSelected = selectedCardIds.includes(card.id);
               return (
-                <div key={card.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
-                  {/* 卡片主内容点击区域 */}
-                  <div className="flex gap-4 p-3 cursor-pointer active:bg-gray-50/80 transition-colors" onClick={() => toggleCardActions(card.id)}>
-                    
-                    {/* 🎬 视频/图片缩略图完美兼容区 */}
-                    {card.media_type === 'video' ? (
-                      <div className="w-20 h-20 rounded-xl shrink-0 bg-zinc-950 relative overflow-hidden border border-gray-100">
-                        <video 
-                          src={`${card.img}#t=0.001`} 
-                          className="w-full h-full object-cover opacity-80" 
-                          preload="metadata" 
-                          muted 
-                          playsInline
-                        />
-                        {/* 居中叠加极简工业风播放键 */}
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                          <svg className="w-4 h-4 text-white/90 fill-current" viewBox="0 0 24 24">
-                            <path d="M8 5v14l11-7z"/>
-                          </svg>
-                        </div>
+                <div 
+                  key={card.id} 
+                  className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all duration-200 ${
+                    isBatchMode && isSelected ? 'border-blue-500 bg-blue-50/20 shadow-md' : 'border-gray-100'
+                  }`}
+                >
+                  {/* 核心改动：加入长按管理系统、多端防御误触、勾选指示器 */}
+                  <div 
+                    className="flex items-center gap-1.5 p-3 cursor-pointer active:bg-gray-50/80 transition-colors select-none"
+                    onClick={() => handleCardClickGrid(card)}
+                    onTouchStart={() => handleLongPressStart(card.id)}
+                    onTouchEnd={handleLongPressEnd}
+                    onMouseDown={() => handleLongPressStart(card.id)}
+                    onMouseUp={handleLongPressEnd}
+                    onMouseLeave={handleLongPressEnd}
+                  >
+                    {/* 批量选中的复选框标记灯 */}
+                    {isBatchMode && (
+                      <div className="pr-1 transition-all duration-200 animate-in fade-in zoom-in-75 shrink-0">
+                        {isSelected ? (
+                          <FaCheckCircle className="text-blue-600 scale-110" size={18} />
+                        ) : (
+                          <FaRegCircle className="text-gray-300" size={18} />
+                        )}
                       </div>
-                    ) : card.media_type === 'gif' ? (
-                      < img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
-                    ) : (
-                      < img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
                     )}
 
-                    {/* 📝 右侧文字、数据、时间戳与状态区 */}
-                    <div className="flex-1 flex flex-col justify-between py-1">
-                      <p className="font-bold text-sm text-gray-800 line-clamp-2">
-                        {card.title || t('admin_unnamed_card')}
-                      </p >
-                      
-                      <div className="flex items-center justify-between">
-                        {/* 浏览量 */}
-                        <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1">
-                          <FaEye /> {card.analytics?.views || 0}
-                        </span>
+                    <div className="flex flex-1 gap-4 items-center overflow-hidden">
+                      {/* 🎬 视频/图片缩略图完美兼容区 */}
+                      {card.media_type === 'video' ? (
+                        <div className="w-20 h-20 rounded-xl shrink-0 bg-zinc-950 relative overflow-hidden border border-gray-100">
+                          <video src={`${card.img}#t=0.001`} className="w-full h-full object-cover opacity-80" preload="metadata" muted playsInline />
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                            <svg className="w-4 h-4 text-white/90 fill-current" viewBox="0 0 24 24">
+                              <path d="M8 5v14l11-7z"/>
+                            </svg>
+                          </div>
+                        </div>
+                      ) : card.media_type === 'gif' ? (
+                        <img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                      ) : (
+                        <img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                      )}
+
+                      {/* 📝 右侧文字与状态指标区 */}
+                      <div className="flex-1 flex flex-col justify-between py-1 h-20 overflow-hidden">
+                        <p className="font-bold text-sm text-gray-800 line-clamp-2 leading-snug">
+                          {card.title || t('admin_unnamed_card')}
+                        </p>
                         
-                        {/* 时间戳与状态标签（完美闭合） */}
-                        <div className="flex items-center gap-2">
-                          {card.updated_at && (
-                            <span className="text-[10px] text-gray-400 font-mono tracking-tighter">
-                              {formatCardTime(card.updated_at)}
-                            </span>
-                          )}
-                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === '已发布' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
-                            {card.status}
+                        <div className="flex items-center justify-between mt-auto">
+                          <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1">
+                            <FaEye /> {card.analytics?.views || 0}
                           </span>
+                          
+                          <div className="flex items-center gap-2">
+                            {card.updated_at && (
+                              <span className="text-[10px] text-gray-400 font-mono tracking-tighter">
+                                {formatCardTime(card.updated_at)}
+                              </span>
+                            )}
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === '已发布' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
+                              {card.status}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div> {/* 💡 之前你就是漏掉了这行，导致几百行报错！ */}
-
+                    </div>
                   </div>
 
-                  {/* 展开的操作面板 */}
-                  <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
+                  {/* 展开的操作面板（批量操作激活时强行隐藏，绝不出格错位） */}
+                  <div className={`flex border-t border-gray-50 bg-slate-50/50 transition-all duration-200 ${isExpanded && !isBatchMode ? 'h-11 opacity-100' : 'h-0 opacity-0 overflow-hidden pointer-events-none'}`}>
                     <button onClick={() => onNavigatePreview(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
                       <FaEye size={11} className="text-gray-400" /> {t('common_preview')}
                     </button>
-                    <button onClick={() => handlePublishToTelegram(card)} className="flex-1 text-center text-[11px] font-bold text-blue-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-blue-50/50 active:scale-95 transition-transform">
-                      <FaPaperPlane size={10} className="text-blue-400" /> {t('common_publish')}
+            
+                    {/* ⭐ 原生发布按键一：符合官方用词的 Inline Mode 内联模式 */}
+                    <button onClick={() => handlePublishInline(card)} className="flex-1 text-center text-[11px] font-bold text-blue-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-blue-50/50 active:scale-95 transition-all">
+                      <FaPaperPlane size={10} className="text-blue-400" /> {t('home_publish_inline')}
                     </button>
+
+                    {/* ⭐ 原生发布按键二：接替原本删除仓位的 Direct Message 后端无痕直发 */}
+                    <button onClick={() => setPublishingCardForDirect(card)} className="flex-1 text-center text-[11px] font-bold text-emerald-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-emerald-50/50 active:scale-95 transition-all">
+                      <FaTelegram size={11} className="text-emerald-400" /> {t('home_publish_direct')}
+                    </button>
+
                     <button onClick={() => onNavigateAnalytics(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
                       <FaChartBar size={11} className="text-gray-400" /> {t('common_data')}
                     </button>
-                    <button onClick={() => onNavigateEditSpecific(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 border-r border-gray-100 hover:bg-gray-100/50 active:text-blue-500">
+                    <button onClick={() => onNavigateEditSpecific(card)} className="flex-1 text-center text-[11px] font-bold text-gray-600 flex items-center justify-center gap-1 hover:bg-gray-100/50 active:text-blue-500">
                       <FaEdit size={11} className="text-gray-400" /> {t('common_edit')}
-                    </button>
-                    <button onClick={() => handleDeleteCard(card.id)} className="flex-1 text-center text-[11px] font-bold text-red-500 flex items-center justify-center gap-1 hover:bg-red-50/40">
-                      <FaTrashAlt size={11} className="text-red-400" /> {t('common_delete')}
                     </button>
                   </div>
                 </div>
@@ -1073,6 +1182,99 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           </div>
         )}
       </div>
+
+      {/* ==========================================
+          👑 工业级暗金/深黑极简：批量管理悬浮底栏
+      ========================================== */}
+      {isBatchMode && (
+        <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900 text-white border-t border-slate-800 px-4 py-3.5 flex items-center justify-between z-50 animate-in slide-in-from-bottom duration-200 rounded-t-2xl shadow-2xl">
+          <div className="flex items-center gap-2">
+            <span className="text-xs bg-blue-600 text-white font-black px-2.5 py-0.5 rounded-full transition-all">
+              {selectedCardIds.length}
+            </span>
+            <span className="text-xs font-bold text-slate-300">{t('home_selected_count')}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => {
+                if (selectedCardIds.length === cards.length) {
+                  setSelectedCardIds([]);
+                } else {
+                  setSelectedCardIds(cards.map(c => c.id));
+                }
+              }}
+              className="text-xs px-3 py-1.5 font-bold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl active:scale-95 transition-all"
+            >
+              {selectedCardIds.length === cards.length ? t('home_deselect_all') : t('home_select_all')}
+            </button>
+            <button 
+              onClick={() => {
+                setIsBatchMode(false);
+                setSelectedCardIds([]);
+              }}
+              className="text-xs px-3 py-1.5 font-bold text-slate-400 hover:text-white transition-colors"
+            >
+              {t('common_cancel')}
+            </button>
+            <button 
+              onClick={handleBatchDelete}
+              disabled={selectedCardIds.length === 0}
+              className="text-xs px-4 py-1.5 font-black bg-red-600 hover:bg-red-700 disabled:bg-red-950/50 disabled:text-red-400/60 rounded-xl shadow-lg shadow-red-900/20 active:scale-95 transition-all flex items-center gap-1"
+            >
+              <FaTrashAlt size={10} /> {t('common_delete')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==========================================
+          💎 精致指纹高仿真级：直发配置渠道弹窗
+      ========================================== */}
+      {publishingCardForDirect && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-xs p-5 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+            <h3 className="text-sm font-black text-gray-900 flex items-center gap-2">
+              <FaTelegram className="text-emerald-500" size={16} />
+              {t('home_direct_publish_title')}
+            </h3>
+            <p className="text-[11px] text-gray-400 mt-1 leading-normal">
+              {t('home_direct_publish_desc')}
+            </p>
+            
+            <div className="mt-4">
+              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1.5">
+                {t('home_target_chat_id')}
+              </label>
+              <input 
+                type="text"
+                value={targetChatId}
+                onChange={(e) => setTargetChatId(e.target.value)}
+                placeholder="@my_channel 或 -100xxxxxx"
+                className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 outline-none focus:border-emerald-500 focus:bg-white transition-all"
+              />
+            </div>
+
+            <div className="mt-5 flex gap-2.5">
+              <button 
+                onClick={() => {
+                  setPublishingCardForDirect(null);
+                  setTargetChatId('');
+                }}
+                className="flex-1 border border-gray-200 text-gray-500 text-xs font-bold py-2.5 rounded-xl hover:bg-slate-50 transition-colors"
+              >
+                {t('common_cancel')}
+              </button>
+              <button 
+                onClick={handlePublishDirectSubmit}
+                className="flex-1 bg-emerald-600 text-white text-xs font-black py-2.5 rounded-xl shadow-md shadow-emerald-100 hover:bg-emerald-700 active:scale-98 transition-all"
+              >
+                {t('common_confirm') || '确认直发'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

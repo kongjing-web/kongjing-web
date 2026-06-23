@@ -184,6 +184,21 @@ def init_db():
             """
         ) 
 
+        # 🚀 6. 【核心新增】初始化直发渠道目标表
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS publish_targets (
+                id TEXT PRIMARY KEY,            -- 目标唯一流水ID
+                user_id TEXT,                  -- 绑定的系统用户ID/TG_ID
+                chat_id TEXT,                  -- Telegram群组或频道的真实数字ChatID (核心凭证)
+                chat_title TEXT,               -- 群或频道的展示名称
+                chat_type TEXT,                -- 渠道类型: group / supergroup / channel
+                created_at INTEGER DEFAULT 0,  -- 绑定时间戳
+                UNIQUE(user_id, chat_id)       -- 防御性索引：防止同一个用户重复绑定同一个群
+            )
+            """
+        )
+
         # 载入系统全局公告
         try:
             cursor.execute("SELECT value FROM system_settings WHERE key = %s", ('announcement',))
@@ -240,6 +255,21 @@ def init_db():
                 except Exception:
                     pass 
 
+        # 🔄 【直发目标表】动态在线热升级机制（为未来增长铺路）
+        targets_columns = _get_existing_columns(cursor, "publish_targets")
+        for name, metadata in {
+            "user_id": "TEXT",
+            "chat_id": "TEXT",
+            "chat_title": "TEXT",
+            "chat_type": "TEXT",
+            "created_at": "INTEGER DEFAULT 0",
+        }.items():
+            if name not in targets_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE publish_targets ADD COLUMN {name} {metadata}")
+                except Exception:
+                    pass
+
         if "telegram_id" in users_columns:
             cursor.execute(
                 """
@@ -252,7 +282,7 @@ def init_db():
         except Exception:
             pass 
 
-    print("[系统成功] 数据库核心资产表结构智能核对并初始化完毕！") 
+    print("[系统成功] 数据库核心资产表结构智能核对并初始化完毕！")
 
 # ==============================================================================
 # 🛡️ 多租户内联控制中心（核心 Inline Query 拦截）
@@ -1504,25 +1534,37 @@ def save_card_with_path_id(card_id: str, data: CardInput, current_user: dict = D
 @app.post("/publish")
 def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depends(get_current_tg_user)):
     """
-    【全新设计】不再承担耗时的发信任务（移交前端原生Inline），本处蜕变为纯粹的发布合法度裁决节点
+    【双模硬核发布网关】
+    1. inline 模式：保持原样，只做鉴权与配额裁决，由前端调起原生 Inline 分享。
+    2. direct 模式：后端越过前端，直接使用专属/系统 Bot 将卡片无痕投递至指定群组或频道。
     """
     incoming_user_id = str(current_user.get("id")).strip() 
     
+    # 1. 兼容获取必填参数
     card_id = str(data.get("card_id") or data.get("cardId") or "").strip() 
+    publish_mode = str(data.get("publish_mode") or data.get("publishMode") or "inline").lower().strip()
+    target_chat_id = str(data.get("chat_id") or data.get("chatId") or "").strip()
+
     if not card_id:
         raise HTTPException(status_code=400, detail="发布失败：缺少必填卡片ID（card_id）") 
+    
+    if publish_mode == "direct" and not target_chat_id:
+        raise HTTPException(status_code=400, detail="发布失败：直发模式下必须提供目标渠道ID（chat_id）")
+
+    title = content = img = buttons_raw = media_type = card_user_id = tg_file_id = None 
 
     try:
+        # 🔍 一气呵成：验证支配权的同时，顺手把直发所需的卡片全量核心资产全捞出来
         with get_db_connection() as (_, cursor):
             cursor.execute(
-                "SELECT user_id FROM cards WHERE id = %s",
+                "SELECT user_id, title, content, img, buttons, media_type, tg_file_id FROM cards WHERE id = %s",
                 (card_id,),
             )
             row = cursor.fetchone() 
             if not row:
                 raise HTTPException(status_code=404, detail="卡片未找到") 
             
-            card_user_id = row[0]
+            card_user_id, title, content, img, buttons_raw, media_type, tg_file_id = row 
             
             # 安全卡点：鉴别卡片支配权
             if str(card_user_id).strip() != incoming_user_id and incoming_user_id != '8368521045':
@@ -1531,15 +1573,16 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
             if not card_user_id or str(card_user_id).strip() == "" or str(card_user_id).lower() == "none":
                 raise HTTPException(status_code=400, detail="发布失败：该卡片在数据库中未绑定任何有效用户") 
 
+            # 🔐 读取所属用户的 VIP 状态、月度配额、以及专属 Bot 令牌（★新增支持专属Bot直发）
             cursor.execute(
-                "SELECT telegram_id, role, vip_until, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
+                "SELECT telegram_id, role, vip_until, monthly_published_count, last_reset_month, bot_token FROM users WHERE telegram_id = %s",
                 (str(card_user_id),),
             )
             user_row = cursor.fetchone() 
             if not user_row:
                 raise HTTPException(status_code=404, detail="卡片所属的用户在系统中未找到") 
             
-            chat_id, role, vip_until, monthly_published_count, last_reset_month = user_row 
+            chat_id, role, vip_until, monthly_published_count, last_reset_month, bot_token = user_row 
             
     except HTTPException:
         raise
@@ -1559,25 +1602,134 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
             )
 
     # VIP 校验断点：任何人均可绑，非 VIP 单月限制 5 张发信配额
-    if role != 'superuser':
-        is_vip = vip_until and int(vip_until) > now_ts
-        if not is_vip and monthly_published_count >= 5:
+    is_vip = (role == 'superuser' or role == 'vip' or (vip_until and int(vip_until) > now_ts))
+    if role != 'superuser' and not is_vip:
+        if monthly_published_count >= 5:
             raise HTTPException(status_code=403, detail='普通用户每月仅能发布5张卡片，请充值升级为无限发布会员') 
 
-    # 💾 激活存储：修改对应资产标识为发布可用态。无需再向 TG 推送多媒体网络流
+    # ==========================================
+    # 🚀 核心整改：根据模式进行逻辑分支处理
+    # ==========================================
+    
+    if publish_mode == "direct":
+        # 👑 【精准对齐发信 Bot 令牌】：优先使用用户的专属 Bot，无绑定则退回系统母舰主 Bot
+        active_bot_token = str(bot_token or "").strip() if bot_token else os.getenv("BOT_TOKEN")
+        if not active_bot_token:
+            raise HTTPException(status_code=500, detail="系统配置错误：未找到有效的 Bot Token")
+
+        # 1. 🖼️ 路径智能修补：为降级方案准备公网绝对路径
+        has_media = bool(img and str(img).strip())
+        if has_media:
+            img_str = str(img).strip()
+            if not (img_str.startswith("http://") or img_str.startswith("https://")):
+                img_str = img_str.lstrip("/")
+                base_url = API_BASE_URL.rstrip("/")
+                if img_str.startswith("api/"):
+                    img_str = img_str[4:]
+                img = f"{base_url}/{img_str}"
+
+        # 2. 🎛️ 解析组装内联按钮组
+        try:
+            buttons_data = json.loads(buttons_raw or "[]")
+        except:
+            buttons_data = [] 
+        try:
+            clean_keyboard = smart_clean_inline_keyboard(buttons_data, card_id)
+            reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
+        except:
+            reply_markup = None 
+
+        # 3. 📝 文本清洗与字数截断
+        clean_html = sanitize_for_telegram((content or "").strip())
+        limit = 1024 if has_media else 4096
+        caption_text = truncate_caption(clean_html, limit=limit) 
+
+        # 4. 🧳 智能化判定直发网关方法与载荷
+        tg_file_id_str = str(tg_file_id or "").strip()
+        payload = {
+            "chat_id": target_chat_id,
+            "reply_markup": reply_markup
+        }
+
+        if has_media:
+            norm_media = str(media_type or 'photo').lower().strip()
+            # 优先使用预热好的 tg_file_id 秒发；无 file_id 则退回公网 URL 爬取
+            media_value = tg_file_id_str if tg_file_id_str else img
+            
+            if norm_media == "video":
+                endpoint = "sendVideo"
+                payload["video"] = media_value
+                payload["caption"] = caption_text
+                payload["parse_mode"] = "HTML"
+            elif norm_media == "gif":
+                endpoint = "sendAnimation"  # 🎬 TG Bot 官方直发接口中，GIF对应的是 sendAnimation
+                payload["animation"] = media_value
+                payload["caption"] = caption_text
+                payload["parse_mode"] = "HTML"
+            else:
+                endpoint = "sendPhoto"
+                payload["photo"] = media_value
+                payload["caption"] = caption_text
+                payload["parse_mode"] = "HTML"
+        else:
+            endpoint = "sendMessage"
+            payload["text"] = caption_text
+            payload["parse_mode"] = "HTML"
+
+        # 5. 🚀 执行直发投递与【硬核自愈发信层】
+        try:
+            res = requests.post(
+                f"https://api.telegram.org/bot{active_bot_token}/{endpoint}",
+                json=payload,
+                timeout=5
+            )
+            
+            # 🔄 HTML 语法崩溃无痕降级重试机制
+            if not res.ok and ("parse" in res.text.lower() or "entity" in res.text.lower() or "entities" in res.text.lower()):
+                print(f"[⚠️ 直发HTML自愈] 检测到排版引发语法崩溃，启动免解析无痕降级直发...")
+                if "parse_mode" in payload:
+                    payload["parse_mode"] = None
+                res = requests.post(
+                    f"https://api.telegram.org/bot{active_bot_token}/{endpoint}",
+                    json=payload,
+                    timeout=5
+                )
+                
+            if not res.ok:
+                print(f"[TG直发核心网关报错]: {res.text}")
+                raise HTTPException(status_code=502, detail=f"Telegram 渠道投递失败: {res.text}")
+                
+            print(f"[直发成功] 卡片已成功穿透直发到目标渠道: {target_chat_id}")
+            
+        except Exception as tg_err:
+            if isinstance(tg_err, HTTPException):
+                raise tg_err
+            raise HTTPException(status_code=500, detail=f"与 Telegram 通信失败: {str(tg_err)}")
+
+    # ==========================================
+    # 💾 激活存储与配额扣减（两套模式共享此中心）
+    # ==========================================
     with get_db_connection() as (_, cursor):
         cursor.execute("UPDATE cards SET status = %s WHERE id = %s", ("已发布", card_id))
-        if role != 'superuser' and not (vip_until and int(vip_until) > now_ts):
+        if role != 'superuser' and not is_vip:
             cursor.execute(
                 "UPDATE users SET monthly_published_count = monthly_published_count + 1 WHERE telegram_id = %s",
                 (chat_id,),
             )
 
-    return {
-        "code": 200, 
-        "status": "success", 
-        "message": "卡片授权激活完毕！请配合前端调起原生分享面板进行发布。",
-    }
+    # 6. 根据发布模式返回对应的成功文案，供前端灵活消费
+    if publish_mode == "direct":
+        return {
+            "code": 200, 
+            "status": "success", 
+            "message": "卡片已成功直接投递到您的目标渠道！",
+        }
+    else:
+        return {
+            "code": 200, 
+            "status": "success", 
+            "message": "卡片授权激活完毕！请配合前端调起原生分享面板进行发布。",
+        }
     
 # 4. 用户登录接口（【严格保留原有变量对齐方案】）
 @app.post("/user/login")
