@@ -21,23 +21,18 @@ import './i18n';
 // ==========================================================================
 const BASE_URL = "https://www.kongjing.online/api".replace(/\/+$/, ""); // 去除尾部斜杠，避免拼接时出现 //api//user
 
-const getAuthHeaders = () => {
-  const initData = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initData : '';
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${initData}`
-  };
-};
-
 const getAuthHeaders = (contentType = null) => {
   const headers = {};
+  
+  // 1. 如果传了特定的 Content-Type 就加上（兼容你原有的旧逻辑）
   if (contentType) {
     headers['Content-Type'] = contentType;
   }
 
-  const initData = window.Telegram?.WebApp?.initData || "";
+  // 2. 加上 window 安全检查，彻底防止 Vercel 编译打包时因为找不到 window 而崩溃
+  const initData = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initData : '';
   if (initData) {
-    headers.Authorization = `Bearer ${initData}`;
+    headers['Authorization'] = `Bearer ${initData}`;
   }
 
   return headers;
