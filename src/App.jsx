@@ -10,6 +10,7 @@ import {
   FaChartBar, FaTrashAlt, FaEdit, FaChevronDown,
   FaCoins, FaBell, FaBookOpen, FaHeadset, FaPaperPlane,
   FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock
+  FaTelegram
 } from "react-icons/fa";
 
 import { useTranslation } from 'react-i18next';
