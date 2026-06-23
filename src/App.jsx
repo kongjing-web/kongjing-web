@@ -9,8 +9,8 @@ import {
   FaLayerGroup, FaEye, FaShare, FaHeart, FaMousePointer, 
   FaChartBar, FaTrashAlt, FaEdit, FaChevronDown,
   FaCoins, FaBell, FaBookOpen, FaHeadset, FaPaperPlane,
-  FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock
-  FaTelegram
+  FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock,
+  FaTelegram // 👈 补上这个漏网之鱼
 } from "react-icons/fa";
 
 import { useTranslation } from 'react-i18next';
