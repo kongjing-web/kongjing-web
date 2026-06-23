@@ -20,6 +20,14 @@ import './i18n';
 // ==========================================================================
 const BASE_URL = "https://www.kongjing.online/api".replace(/\/+$/, ""); // 去除尾部斜杠，避免拼接时出现 //api//user
 
+const getAuthHeaders = () => {
+  const initData = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initData : '';
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${initData}`
+  };
+};
+
 const getAuthHeaders = (contentType = null) => {
   const headers = {};
   if (contentType) {
