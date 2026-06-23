@@ -10,7 +10,8 @@ import {
   FaChartBar, FaTrashAlt, FaEdit, FaChevronDown,
   FaCoins, FaBell, FaBookOpen, FaHeadset, FaPaperPlane,
   FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock,
-  FaTelegram 
+  FaTelegram,
+  FaCheckCircle // 👈 🔥 关键修复：把成功勾选的图标补在这里！
 } from "react-icons/fa";
 
 import { useTranslation } from 'react-i18next';
