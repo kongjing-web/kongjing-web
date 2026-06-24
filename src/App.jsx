@@ -2277,11 +2277,11 @@ return (
       </div> {/* 💡 核心修复点：在这里精准闭合第 2 步的“主体可滚动区域 (flex-1 overflow-y-auto)” */}
 
       {/* 3. 悬浮主编辑呼起圆盘 (利用 absolute 固定在页面最底部，不跟随上面滚动) */}
-      <div className="absolute bottom-0 left-0 right-0 z-40 flex flex-col select-none">
+      <div className="absolute bottom-0 left-0 right-0 z-40 flex flex-col select-none pointer-events-none">
         
-        {/* 1/3 高度的全宽菜单功能抽屉 */}
+        {/* 1/3 高度的全宽菜单功能抽屉 - 仅在打开时渲染 */}
         {showMenu && (
-          <div className="bg-white rounded-t-[24px] shadow-[0_-10px_30px_rgba(0,0,0,0.08)] border-t border-gray-200/60 p-4 w-full h-[280px] flex flex-col animate-in slide-in-from-bottom duration-200">
+          <div className="pointer-events-auto bg-white rounded-t-[24px] shadow-[0_-10px_30px_rgba(0,0,0,0.08)] border-t border-gray-200/60 p-4 w-full h-[300px] flex flex-col animate-in slide-in-from-bottom duration-200 pb-safe">
             
             {/* 抽屉顶部控制小吧台 */}
             <div className="flex justify-between items-center pb-2 mb-2 border-b border-gray-100 shrink-0">
@@ -2297,7 +2297,7 @@ return (
             </div>
 
             {/* 抽屉内部可滚动视图视窗 */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto pb-2">
               
               {/* 视图A：主功能菜单 */}
               {menuView === 'main' && (
@@ -2378,28 +2378,29 @@ return (
                   </div>
                 </div>
               )}
-            </div> {/* 闭合： flex-1 overflow-y-auto 抽屉内部滚动视窗 */}
-          </div> 
-
+            </div> {/* 闭合：抽屉内部滚动视窗 */}
+          </div>
         )}
-        <div className="flex justify-center w-full mb-4 shrink-0 pb-safe pointer-events-none">
-          <button 
-            onClick={() => { 
-              const nextState = !showMenu;
-              setShowMenu(nextState);
-              setMenuView('main');
-              if (nextState && editor) {
-                editor.commands.blur();
-              }
-            }} 
-            className="pointer-events-auto bg-slate-900/95 backdrop-blur-xs text-white py-1.5 px-4 rounded-full flex items-center justify-center gap-1.5 shadow-xl border border-slate-800 active:scale-95 transition-transform font-bold text-xs whitespace-nowrap"
-          >
-            <span>{showMenu ? "✕" : "⚙️"}</span> 
-            {showMenu ? t('common_close') || '收起菜单' : t('editor_btn_config_title')}
-          </button>
-        </div>
 
-      </div> {/* 闭合：悬浮主编辑呼起圆盘容器 */}
+        {/* 固守页面最底部的触发按钮条 - 仅在菜单关闭时（!showMenu）才显示 */}
+        {!showMenu && (
+          <div className="flex justify-center w-full mb-4 shrink-0 pb-safe">
+            <button 
+              onClick={() => { 
+                setShowMenu(true);
+                setMenuView('main');
+                if (editor) {
+                  editor.commands.blur();
+                }
+              }} 
+              className="pointer-events-auto bg-slate-900/95 backdrop-blur-xs text-white py-1.5 px-4 rounded-full flex items-center justify-center gap-1.5 shadow-xl border border-slate-800 active:scale-95 transition-transform font-bold text-xs whitespace-nowrap"
+            >
+              <span>⚙️</span> {t('editor_btn_config_title')}
+            </button>
+          </div>
+        )}
+
+      </div>
 
       {/* 4. 底部单个按钮高精度独立配置弹窗 (Modal 遮罩层) */}
       {showBtnModal && editingButtonPos && (
