@@ -2177,289 +2177,303 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   ];
 
 return (
-    <div className="flex flex-col h-screen bg-[#E7EBF0] text-gray-800 max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
+  <div className="flex flex-col h-screen bg-[#E7EBF0] text-gray-800 max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
+    
+    {/* 1. 顶部导航栏 */}
+    <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
+      <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
+      <h1 className="text-sm font-bold text-gray-700">{t('editor_title')}</h1>
+      <button onClick={triggerPublish} className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md active:scale-95 transition-transform">{t('editor_save_card')}</button>
+    </div>
+
+    {/* 2. 主体可滚动区域 */}
+    <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-80">
       
-      {/* 1. 顶部导航栏 */}
-      <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
-        <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
-        <h1 className="text-sm font-bold text-gray-700">{t('editor_title')}</h1>
-        <button onClick={triggerPublish} className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md active:scale-95 transition-transform">{t('editor_save_card')}</button>
-      </div>
-
-      {/* 2. 主体可滚动区域 */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-80">
+      {/* 卡片预览总容器 */}
+      <div className="w-full max-w-[330px] mx-auto bg-white rounded-[15px] overflow-hidden shadow-sm border border-gray-100 flex flex-col">
         
-        {/* 卡片预览总容器 */}
-        <div className="w-full max-w-[330px] mx-auto bg-white rounded-[15px] overflow-hidden shadow-sm border border-gray-100 flex flex-col">
-          
-          {/* 媒体卡片标题与上传栏 */}
-          <div className="p-3 border-b border-gray-50 bg-slate-50/50 flex justify-between items-center">
-            <span className="text-[11px] text-gray-400 font-bold">{t('editor_media_title')}</span>
-            <button onClick={() => fileInputRef.current.click()} className="text-xs text-blue-500 font-bold hover:underline">
-              {mediaFile ? t('editor_replace_media') : t('editor_add_media')}
-            </button>
-            <input type="file" ref={fileInputRef} onChange={handleMediaChange} accept="image/*,video/*" className="hidden" />
+        {/* 媒体卡片标题与上传栏 */}
+        <div className="p-3 border-b border-gray-50 bg-slate-50/50 flex justify-between items-center">
+          <span className="text-[11px] text-gray-400 font-bold">{t('editor_media_title')}</span>
+          <button onClick={() => fileInputRef.current.click()} className="text-xs text-blue-500 font-bold hover:underline">
+            {mediaFile ? t('editor_replace_media') : t('editor_add_media')}
+          </button>
+          <input type="file" ref={fileInputRef} onChange={handleMediaChange} accept="image/*,video/*" className="hidden" />
+        </div>
+
+        {/* 媒体文件预览区 */}
+        {mediaFile && (
+          <div className="w-full max-h-[380px] min-h-[160px] min-w-[150px] bg-[#f4f4f7] relative flex items-center justify-center overflow-hidden">
+            {mediaFile.type === 'video' ? (
+              <video src={mediaFile.previewUrl || mediaFile.remoteUrl} controls className="w-full h-full object-contain object-center" />
+            ) : mediaFile.type === 'gif' ? (
+              <img src={mediaFile.previewUrl || mediaFile.remoteUrl} className="w-full h-full object-contain object-center" alt="" />
+            ) : (
+              <img src={mediaFile.previewUrl || mediaFile.remoteUrl} className="w-full h-full object-contain object-center" alt="" />
+            )}
+            <button onClick={() => setMediaFile(null)} className="absolute top-2 right-2 bg-black/60 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">✕</button>
           </div>
+        )}
 
-          {/* 媒体文件预览区 */}
-          {mediaFile && (
-            <div className="w-full max-h-[380px] min-h-[160px] min-w-[150px] bg-[#f4f4f7] relative flex items-center justify-center overflow-hidden">
-              {mediaFile.type === 'video' ? (
-                <video src={mediaFile.previewUrl || mediaFile.remoteUrl} controls className="w-full h-full object-contain object-center" />
-              ) : mediaFile.type === 'gif' ? (
-                <img src={mediaFile.previewUrl || mediaFile.remoteUrl} className="w-full h-full object-contain object-center" alt="" />
-              ) : (
-                <img src={mediaFile.previewUrl || mediaFile.remoteUrl} className="w-full h-full object-contain object-center" alt="" />
-              )}
-              <button onClick={() => setMediaFile(null)} className="absolute top-2 right-2 bg-black/60 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">✕</button>
-            </div>
-          )}
-
-          {/* 富文本编辑器输入区 */}
-          <div className="p-3 bg-white min-h-[140px] relative pb-7">
-            <p className="mb-2 text-[10px] text-gray-400">{t('editor_btn_matrix_tip')}</p>
-            <EditorContent editor={editor} onFocus={() => setShowMenu(false)} />
-            <div className={`absolute bottom-2 right-3 text-[10px] font-mono px-1.5 py-0.5 rounded-md select-none transition-all ${
-              isOverLimit 
-                ? 'bg-red-50 text-red-500 font-bold animate-pulse border border-red-200'
-                : 'text-gray-400 bg-slate-50 border border-slate-100'
-            }`}>
-              {charCount} / {maxLimit}
-            </div>
+        {/* 富文本编辑器输入区 */}
+        <div className="p-3 bg-white min-h-[140px] relative pb-7">
+          <p className="mb-2 text-[10px] text-gray-400">{t('editor_btn_matrix_tip')}</p>
+          <EditorContent editor={editor} onFocus={() => setShowMenu(false)} />
+          <div className={`absolute bottom-2 right-3 text-[10px] font-mono px-1.5 py-0.5 rounded-md select-none transition-all ${
+            isOverLimit 
+              ? 'bg-red-50 text-red-500 font-bold animate-pulse border border-red-200'
+              : 'text-gray-400 bg-slate-50 border border-slate-100'
+          }`}>
+            {charCount} / {maxLimit}
           </div>
+        </div>
 
-          {/* 动态内联按钮矩阵展示区 */}
-          {buttons.length > 0 && (
-            <div className="p-2 border-t border-gray-100 bg-white space-y-[1.5px]">
-              {buttons.map((row, rowIndex) => (
-                <div key={`row-${rowIndex}`} className="grid gap-[1.5px]" style={{ gridTemplateColumns: `repeat(${Math.max(1, row.length)}, 1fr)` }}>
-                  {row.map((btn, colIndex) => {
-                    const btnType = detectButtonType(btn);
-                    const typeMeta = {
-                      url: { icon: '🔗', label: t('editor_type_url') },
-                      web_app: { icon: '📱', label: t('editor_type_webapp') },
-                      callback: { icon: '⚡', label: t('editor_type_callback') },
-                      switch: { icon: '📣', label: t('editor_type_switch') },
-                      pay: { icon: '💳', label: t('editor_type_pay') },
-                    }[btnType] || { icon: '🔗', label: t('editor_type_url') };
+        {/* 动态内联按钮矩阵展示区 */}
+        {buttons.length > 0 && (
+          <div className="p-2 border-t border-gray-100 bg-white space-y-[1.5px]">
+            {buttons.map((row, rowIndex) => (
+              <div key={`row-${rowIndex}`} className="grid gap-[1.5px]" style={{ gridTemplateColumns: `repeat(${Math.max(1, row.length)}, 1fr)` }}>
+                {row.map((btn, colIndex) => {
+                  const btnType = detectButtonType(btn);
+                  const typeMeta = {
+                    url: { icon: '🔗', label: t('editor_type_url') },
+                    web_app: { icon: '📱', label: t('editor_type_webapp') },
+                    callback: { icon: '⚡', label: t('editor_type_callback') },
+                    switch: { icon: '📣', label: t('editor_type_switch') },
+                    pay: { icon: '💳', label: t('editor_type_pay') },
+                  }[btnType] || { icon: '🔗', label: t('editor_type_url') };
 
-                    return (
-                      <button
-                        key={`${rowIndex}-${colIndex}`}
-                        type="button"
-                        onClick={() => {
-                          setActiveBtnKey(`${rowIndex}-${colIndex}`);
-                          setEditingButtonPos({ rowIndex, colIndex });
-                          setBtnDraft({
-                            text: btn.text || '',
-                            value: btn.url || btn.callback_data || btn.switch_inline_query || btn.web_app?.url || '',
-                            btnType: btnType,
-                          });
-                          setShowBtnModal(true);
-                        }}
-                        className={`py-2 px-1 rounded-md text-center text-[12px] font-semibold border transition-all cursor-pointer ${
-                          activeBtnKey === `${rowIndex}-${colIndex}` 
-                            ? 'border-blue-500 bg-blue-50 text-blue-600' 
-                            : 'bg-[#f1f5f9]/70 border-transparent text-gray-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        <span className="block truncate max-w-full">{btn.text || t('editor_unnamed_btn')}</span>
-                        <span className="text-[9px] opacity-40 font-normal block scale-90">{typeMeta.icon} {typeMeta.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          )}
-        </div> {/* 闭合：卡片预览总容器 */}
-
-      </div> {/* 💡 核心修复点：在这里精准闭合第 2 步的“主体可滚动区域 (flex-1 overflow-y-auto)” */}
-
-      {/* 3. 悬浮主编辑呼起圆盘 (利用 absolute 固定在页面最底部，不跟随上面滚动) */}
-      <div className="absolute bottom-0 left-0 right-0 z-40 flex flex-col select-none pointer-events-none">
-        
-        {/* 1/3 高度的全宽菜单功能抽屉 - 仅在打开时渲染 */}
-        {showMenu && (
-          <div className="pointer-events-auto bg-white rounded-t-[24px] shadow-[0_-10px_30px_rgba(0,0,0,0.08)] border-t border-gray-200/60 p-4 w-full h-[300px] flex flex-col animate-in slide-in-from-bottom duration-200 pb-safe">
-            
-            {/* 抽屉顶部控制小吧台 */}
-            <div className="flex justify-between items-center pb-2 mb-2 border-b border-gray-100 shrink-0">
-              <span className="text-[11px] font-bold text-gray-400 tracking-wider">
-                {menuView === 'main' ? t('editor_btn_config_title') : t('common_back')}
-              </span>
-              <button 
-                onClick={() => setShowMenu(false)} 
-                className="text-gray-400 hover:text-gray-600 text-xs font-bold px-2 py-0.5 rounded-full bg-gray-50 active:scale-90 transition-transform"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* 抽屉内部可滚动视图视窗 */}
-            <div className="flex-1 overflow-y-auto pb-2">
-              
-              {/* 视图A：主功能菜单 */}
-              {menuView === 'main' && (
-                <div className="grid grid-cols-4 gap-3 pb-4">
-                  {menuItems.map((item, index) => (
+                  return (
                     <button
-                      key={index}
-                      onClick={(e) => handleMenuActionById(e, item.id)}
-                      className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all active:scale-90 ${
-                        isMenuItemActive(item) ? 'bg-blue-50 text-blue-600 font-bold' : 'hover:bg-gray-50 text-gray-600'
+                      key={`${rowIndex}-${colIndex}`}
+                      type="button"
+                      onClick={() => {
+                        setActiveBtnKey(`${rowIndex}-${colIndex}`);
+                        setEditingButtonPos({ rowIndex, colIndex });
+                        setBtnDraft({
+                          text: btn.text || '',
+                          value: btn.url || btn.callback_data || btn.switch_inline_query || btn.web_app?.url || '',
+                          btnType: btnType,
+                        });
+                        setShowBtnModal(true);
+                      }}
+                      className={`py-2 px-1 rounded-md text-center text-[12px] font-semibold border transition-all cursor-pointer ${
+                        activeBtnKey === `${rowIndex}-${colIndex}` 
+                          ? 'border-blue-500 bg-blue-50 text-blue-600' 
+                          : 'bg-[#f1f5f9]/70 border-transparent text-gray-700 hover:bg-slate-100'
                       }`}
                     >
-                      <span className="text-xl mb-1">{item.icon}</span>
-                      <span className="text-[11px] tracking-tight opacity-90">{item.label}</span>
+                      <span className="block truncate max-w-full">{btn.text || t('editor_unnamed_btn')}</span>
+                      <span className="text-[9px] opacity-40 font-normal block scale-90">{typeMeta.icon} {typeMeta.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div> {/* 卡片预览总容器 */}
+
+    </div> {/* 💡 核心修复点：在这里精准闭合第 2 步的“主体可滚动区域 (flex-1 overflow-y-auto)” */}
+
+    {/* 3. 悬浮主编辑呼起圆盘 (利用 absolute 固定在页面最底部，不跟随上面滚动) */}
+    <div className="absolute bottom-0 left-0 right-0 z-40 flex flex-col select-none pointer-events-none">
+      
+      {/* 1/3 高度的全宽菜单功能抽屉 - 仅在打开时渲染 */}
+      {showMenu && (
+        /* 🟢 优化：加入高度动态自适应逻辑，进入 emoji 时变高到 440px，其余时刻保持原样 300px */
+        <div className={`pointer-events-auto bg-white rounded-t-[24px] shadow-[0_-10px_30px_rgba(0,0,0,0.08)] border-t border-gray-200/60 p-4 w-full flex flex-col animate-in slide-in-from-bottom duration-200 pb-safe transition-all ${
+          menuView === 'emoji' ? 'h-[440px]' : 'h-[300px]'
+        }`}>
+          
+          {/* 抽屉顶部控制小吧台 */}
+          <div className="flex justify-between items-center pb-2 mb-2 border-b border-gray-100 shrink-0">
+            {menuView === 'main' ? (
+              <span className="text-[11px] font-bold text-gray-400 tracking-wider">
+                {t('editor_btn_config_title')}
+              </span>
+            ) : (
+              /* 🟢 优化：子视图状态下，左侧统一展现极简的“← 返回”操控按钮，实现全局联动 */
+              <button 
+                onClick={() => setMenuView('main')}
+                className="text-[11px] font-bold text-blue-500 flex items-center gap-1 active:scale-95 transition-transform cursor-pointer"
+              >
+                ← {t('common_back')}
+              </button>
+            )}
+            <button 
+              onClick={() => setShowMenu(false)} 
+              className="text-gray-400 hover:text-gray-600 text-xs font-bold px-2 py-0.5 rounded-full bg-gray-50 active:scale-90 transition-transform cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* 抽屉内部可滚动视图视窗 */}
+          <div className="flex-1 overflow-y-auto pb-2">
+            
+            {/* 视图A：主功能菜单 */}
+            {menuView === 'main' && (
+              <div className="grid grid-cols-4 gap-3 pb-4">
+                {menuItems.map((item, index) => (
+                  <button
+                    key={index}
+                    onClick={(e) => handleMenuActionById(e, item.id)}
+                    className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all active:scale-90 ${
+                      isMenuItemActive(item) ? 'bg-blue-50 text-blue-600 font-bold' : 'hover:bg-gray-50 text-gray-600'
+                    }`}
+                  >
+                    <span className="text-xl mb-1">{item.icon}</span>
+                    <span className="text-[11px] tracking-tight opacity-90">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* 视图B：矩阵行列配置视图 */}
+            {menuView === 'grid' && (
+              <div className="p-1 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex justify-between items-center border-b pb-1">
+                  <span className="text-xs font-bold text-gray-700">{t('editor_config_matrix')}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">{t('editor_rows')}</label>
+                    <input type="number" min="1" max="8" value={gridConfig.rows} onChange={(e) => setGridConfig({ ...gridConfig, rows: e.target.value })} className="w-full border rounded-lg px-2 py-1 text-xs outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">{t('editor_cols')}</label>
+                    <input type="number" min="1" max="5" value={gridConfig.cols} onChange={(e) => setGridConfig({ ...gridConfig, cols: e.target.value })} className="w-full border rounded-lg px-2 py-1 text-xs outline-none" />
+                  </div>
+                </div>
+                <button onClick={generateGrid} className="w-full bg-blue-600 text-white py-2 rounded-xl text-xs font-bold shadow-md shadow-blue-100">{t('editor_generate_matrix')}</button>
+              </div>
+            )}
+
+            {/* 视图C：内嵌文字超级链接视图 */}
+            {menuView === 'link' && (
+              <div className="p-1 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-700">{t('editor_insert_link_title')}</span></div>
+                <input id="linkUrl" placeholder="https://..." className="w-full border-b py-1.5 text-xs outline-none text-blue-500" autoFocus />
+                <button onClick={() => { const url = document.getElementById('linkUrl').value; if (url) { editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run(); } setMenuView('main'); }} className="w-full bg-blue-600 text-white py-2 rounded-xl text-xs font-bold">{t('editor_confirm_insert')}</button>
+              </div>
+            )}
+
+            {/* 🟢 优化：视图D：标准原生 Emoji 开源组件视图 */}
+            {menuView === 'emoji' && (
+              /* 彻底移除局部的额外标题栏，注入样式穿透彻底隐形组件内部的英文分类标题 */
+              <div className="p-0 flex flex-col h-full [&_.epr-emoji-category-label]:hidden">
+                <div className="flex-1 overflow-hidden rounded-xl border border-slate-100">
+                  <EmojiPicker 
+                    onEmojiClick={(emojiData) => { if (editor) editor.chain().focus().insertContent(emojiData.emoji).run(); }} 
+                    autoFocusSearch={false} 
+                    theme="light" 
+                    searchPlaceholder={t('editor_search_emoji_placeholder')} 
+                    width="100%" 
+                    height="340px" /* 🟢 高度从原本捉襟见肘的 180px 直接撑满放大到 340px */
+                    previewConfig={{ showPreview: false }} 
+                    skinTonesDisabled={true} 
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* 视图E：TG 特性专属自定义表情包视图 */}
+            {menuView === 'custom_emoji' && (
+              <div className="p-1 min-h-[200px]">
+                <p className="text-[10px] text-gray-400 p-2 text-center bg-amber-50/60 rounded-lg mb-2">{t('editor_custom_emoji_tip')}</p>
+                <div className="grid grid-cols-4 gap-2 pb-4">
+                  {customEmojis.map((item, idx) => (
+                    <button key={idx} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (editor) { editor.chain().focus().insertContent(`<tg-emoji emoji-id="${item.emoji_id}">${item.fallback_char}</tg-emoji>`).run(); } }} className="flex flex-col items-center justify-center p-1.5 border border-slate-100 rounded-xl hover:bg-slate-50 transition-all active:scale-95" >
+                      <span className="text-xl mb-1">{item.fallback_char}</span>
+                      <span className="text-[8px] text-gray-400 scale-90 truncate max-w-full">ID:{item.emoji_id.slice(-4)}</span>
                     </button>
                   ))}
                 </div>
-              )}
-
-              {/* 视图B：矩阵行列配置视图 */}
-              {menuView === 'grid' && (
-                <div className="p-1 space-y-3 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex justify-between items-center border-b pb-1">
-                    <span className="text-xs font-bold text-gray-700">{t('editor_config_matrix')}</span>
-                    <span className="text-blue-500 text-xs cursor-pointer font-bold" onClick={() => setMenuView('main')}>{t('common_back')}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] text-gray-400 mb-1">{t('editor_rows')}</label>
-                      <input type="number" min="1" max="8" value={gridConfig.rows} onChange={(e) => setGridConfig({ ...gridConfig, rows: e.target.value })} className="w-full border rounded-lg px-2 py-1 text-xs outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-gray-400 mb-1">{t('editor_cols')}</label>
-                      <input type="number" min="1" max="5" value={gridConfig.cols} onChange={(e) => setGridConfig({ ...gridConfig, cols: e.target.value })} className="w-full border rounded-lg px-2 py-1 text-xs outline-none" />
-                    </div>
-                  </div>
-                  <button onClick={generateGrid} className="w-full bg-blue-600 text-white py-2 rounded-xl text-xs font-bold shadow-md shadow-blue-100">{t('editor_generate_matrix')}</button>
-                </div>
-              )}
-
-              {/* 视图C：内嵌文字超级链接视图 */}
-              {menuView === 'link' && (
-                <div className="p-1 space-y-3 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-700">{t('editor_insert_link_title')}</span><span className="text-gray-400 text-xs cursor-pointer" onClick={() => setMenuView('main')}>{t('common_cancel')}</span></div>
-                  <input id="linkUrl" placeholder="https://..." className="w-full border-b py-1.5 text-xs outline-none text-blue-500" autoFocus />
-                  <button onClick={() => { const url = document.getElementById('linkUrl').value; if (url) { editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run(); } setMenuView('main'); }} className="w-full bg-blue-600 text-white py-2 rounded-xl text-xs font-bold">{t('editor_confirm_insert')}</button>
-                </div>
-              )}
-
-              {/* 视图D：标准原生 Emoji 开源组件视图 */}
-              {menuView === 'emoji' && (
-                <div className="p-1 flex flex-col min-h-[200px]">
-                  <div className="flex justify-between items-center pb-2 px-2 border-b mb-2 bg-white">
-                    <span className="text-xs font-bold text-gray-700">{t('editor_common_emojis')}</span>
-                    <span className="text-blue-500 text-xs font-bold cursor-pointer" onClick={() => setMenuView('main')}>{t('common_back')}</span>
-                  </div>
-                  <div className="flex-1 overflow-hidden">
-                    <EmojiPicker onEmojiClick={(emojiData) => { if (editor) editor.chain().focus().insertContent(emojiData.emoji).run(); }} autoFocusSearch={false} theme="light" searchPlaceholder={t('editor_search_emoji_placeholder')} width="100%" height="180px" previewConfig={{ showPreview: false }} skinTonesDisabled={true} />
-                  </div>
-                </div>
-              )}
-
-              {/* 视图E：TG 特性专属自定义表情包视图 */}
-              {menuView === 'custom_emoji' && (
-                <div className="p-1 min-h-[200px]">
-                  <div className="flex justify-between items-center pb-2 px-2 border-b mb-2 bg-white">
-                    <span className="text-xs font-bold text-gray-700">{t('editor_my_custom_emojis')}</span>
-                    <span className="text-blue-500 text-xs font-bold cursor-pointer" onClick={() => setMenuView('main')}>{t('common_back')}</span>
-                  </div>
-                  <p className="text-[10px] text-gray-400 p-2 text-center bg-amber-50/60 rounded-lg mb-2">{t('editor_custom_emoji_tip')}</p >
-                  <div className="grid grid-cols-4 gap-2 pb-4">
-                    {customEmojis.map((item, idx) => (
-                      <button key={idx} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (editor) { editor.chain().focus().insertContent(`<tg-emoji emoji-id="${item.emoji_id}">${item.fallback_char}</tg-emoji>`).run(); } }} className="flex flex-col items-center justify-center p-1.5 border border-slate-100 rounded-xl hover:bg-slate-50 transition-all active:scale-95" >
-                        <span className="text-xl mb-1">{item.fallback_char}</span>
-                        <span className="text-[8px] text-gray-400 scale-90 truncate max-w-full">ID:{item.emoji_id.slice(-4)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div> {/* 闭合：抽屉内部滚动视窗 */}
-          </div>
-        )}
-
-        {/* 固守页面最底部的触发按钮条 - 仅在菜单关闭时（!showMenu）才显示 */}
-        {!showMenu && (
-          <div className="flex justify-center w-full mb-4 shrink-0 pb-safe">
-            <button 
-              onClick={() => { 
-                setShowMenu(true);
-                setMenuView('main');
-                if (editor) {
-                  editor.commands.blur();
-                }
-              }} 
-              className="pointer-events-auto bg-slate-900/95 backdrop-blur-xs text-white py-1.5 px-4 rounded-full flex items-center justify-center gap-1.5 shadow-xl border border-slate-800 active:scale-95 transition-transform font-bold text-xs whitespace-nowrap"
-            >
-              <span>⚙️</span> {t('editor_btn_config_title')}
-            </button>
-          </div>
-        )}
-
-      </div>
-
-      {/* 4. 底部单个按钮高精度独立配置弹窗 (Modal 遮罩层) */}
-      {showBtnModal && editingButtonPos && (
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-xs flex items-end justify-center z-50 animate-in fade-in duration-200" onClick={() => setShowBtnModal(false)}>
-          <div className="w-full bg-white rounded-t-[30px] p-5 pb-8 space-y-4 shadow-2xl animate-in slide-in-from-bottom-10 duration-200 max-h-[90%] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-1.5"><span>⚙️</span> {t('editor_edit_specific_btn')}</h3>
-              <button onClick={() => {
-                const { rowIndex, colIndex } = editingButtonPos;
-                setButtons((prev) => prev.map((row, r) => r === rowIndex ? row.filter((_, c) => c !== colIndex) : row).filter((row) => row.length > 0));
-                setShowBtnModal(false);
-              }} className="text-xs text-red-500 font-bold bg-red-50 px-2.5 py-1 rounded-lg hover:bg-red-100">{t('editor_remove_btn')}</button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_btn_text')}</label>
-                <input type="text" value={btnDraft.text} onChange={(e) => setBtnDraft({ ...btnDraft, text: e.target.value })} placeholder={t('editor_input_btn_text')} className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 bg-slate-50" />
               </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_btn_type')}</label>
-                <select value={btnDraft.btnType} onChange={(e) => setBtnDraft({ ...btnDraft, btnType: e.target.value, value: '' })} className="w-full border rounded-xl px-3 py-2 text-xs outline-none bg-slate-50 focus:border-blue-500 font-medium">
-                  <option value="url">{t('editor_btn_type_url')}</option>
-                  <option value="web_app">{t('editor_btn_type_webapp')}</option>
-                  <option value="share">{t('editor_btn_type_share')}</option>
-                  <option value="callback">{t('editor_btn_type_callback')}</option>
-                  <option value="switch">{t('editor_btn_type_switch')}</option>
-                  <option value="pay">{t('editor_btn_type_pay')}</option>
-                </select>
-              </div>
-
-              {btnDraft.btnType !== 'pay' && btnDraft.btnType !== 'share' && (
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_core_content')}</label>
-                  <input
-                    type="text"
-                    value={btnDraft.value}
-                    onChange={(e) => setBtnDraft({ ...btnDraft, value: e.target.value })}
-                    placeholder={
-                      btnDraft.btnType === 'callback' ? t('editor_input_callback_tip') :
-                      btnDraft.btnType === 'switch' ? t('editor_input_switch_tip') : t('editor_input_url_tip')
-                    }
-                    className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 bg-slate-50 font-mono text-blue-600"
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button onClick={() => setShowBtnModal(false)} className="flex-1 border py-2.5 rounded-xl text-xs font-bold text-gray-500 hover:bg-slate-50 active:scale-98 transition-transform">{t('common_cancel')}</button>
-              <button onClick={saveButtonConfig} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl text-xs font-bold shadow-md shadow-blue-100 hover:bg-blue-700 active:scale-98 transition-transform">{t('common_confirm')}</button>
-            </div>
-          </div> {/* 闭合：Modal内层白色卡片容器 */}
-        </div> 
+            )}
+          </div> {/* 闭合：抽屉内部滚动视窗 */}
+        </div>
       )}
 
-    </div> 
-  );
+      {/* 固守页面最底部的触发按钮条 - 仅在菜单关闭时（!showMenu）才显示 */}
+      {!showMenu && (
+        <div className="flex justify-center w-full mb-4 shrink-0 pb-safe">
+          <button 
+            onClick={() => { 
+              setShowMenu(true);
+              setMenuView('main');
+              if (editor) {
+                editor.commands.blur();
+              }
+            }} 
+            className="pointer-events-auto bg-slate-900/95 backdrop-blur-xs text-white py-1.5 px-4 rounded-full flex items-center justify-center gap-1.5 shadow-xl border border-slate-800 active:scale-95 transition-transform font-bold text-xs whitespace-nowrap"
+          >
+            <span>⚙️</span> {t('editor_btn_config_title')}
+          </button>
+        </div>
+      )}
+
+    </div>
+
+    {/* 4. 底部单个按钮高精度独立配置弹窗 (Modal 遮罩层) */}
+    {showBtnModal && editingButtonPos && (
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-xs flex items-end justify-center z-50 animate-in fade-in duration-200" onClick={() => setShowBtnModal(false)}>
+        <div className="w-full bg-white rounded-t-[30px] p-5 pb-8 space-y-4 shadow-2xl animate-in slide-in-from-bottom-10 duration-200 max-h-[90%] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="flex justify-between items-center border-b pb-3">
+            <h3 className="text-sm font-bold text-gray-800 flex items-center gap-1.5"><span>⚙️</span> {t('editor_edit_specific_btn')}</h3>
+            <button onClick={() => {
+              const { rowIndex, colIndex } = editingButtonPos;
+              setButtons((prev) => prev.map((row, r) => r === rowIndex ? row.filter((_, c) => c !== colIndex) : row).filter((row) => row.length > 0));
+              setShowBtnModal(false);
+            }} className="text-xs text-red-500 font-bold bg-red-50 px-2.5 py-1 rounded-lg hover:bg-red-100">{t('editor_remove_btn')}</button>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_btn_text')}</label>
+              <input type="text" value={btnDraft.text} onChange={(e) => setBtnDraft({ ...btnDraft, text: e.target.value })} placeholder={t('editor_input_btn_text')} className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 bg-slate-50" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_btn_type')}</label>
+              <select value={btnDraft.btnType} onChange={(e) => setBtnDraft({ ...btnDraft, btnType: e.target.value, value: '' })} className="w-full border rounded-xl px-3 py-2 text-xs outline-none bg-slate-50 focus:border-blue-500 font-medium">
+                <option value="url">{t('editor_btn_type_url')}</option>
+                <option value="web_app">{t('editor_btn_type_webapp')}</option>
+                <option value="share">{t('editor_btn_type_share')}</option>
+                <option value="callback">{t('editor_btn_type_callback')}</option>
+                <option value="switch">{t('editor_btn_type_switch')}</option>
+                <option value="pay">{t('editor_btn_type_pay')}</option>
+              </select>
+            </div>
+
+            {btnDraft.btnType !== 'pay' && btnDraft.btnType !== 'share' && (
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_core_content')}</label>
+                <input
+                  type="text"
+                  value={btnDraft.value}
+                  onChange={(e) => setBtnDraft({ ...btnDraft, value: e.target.value })}
+                  placeholder={
+                    btnDraft.btnType === 'callback' ? t('editor_input_callback_tip') :
+                    btnDraft.btnType === 'switch' ? t('editor_input_switch_tip') : t('editor_input_url_tip')
+                  }
+                  className="w-full border rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 bg-slate-50 font-mono text-blue-600"
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button onClick={() => setShowBtnModal(false)} className="flex-1 border py-2.5 rounded-xl text-xs font-bold text-gray-500 hover:bg-slate-50 active:scale-98 transition-transform">{t('common_cancel')}</button>
+            <button onClick={saveButtonConfig} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl text-xs font-bold shadow-md shadow-blue-100 hover:bg-blue-700 active:scale-98 transition-transform">{t('common_confirm')}</button>
+          </div>
+        </div> {/* 闭合：Modal内层白色卡片容器 */}
+      </div> 
+    )}
+
+  </div> 
+);
 } // 闭合整个 EditorScreen 组件函数
 
 
