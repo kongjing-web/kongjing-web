@@ -108,14 +108,25 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
         attrs = dict(tag.attrs)
         tag.attrs.clear()
 
+        # ====== 核心升级：仅对 a 标签逻辑进行重组和增强 ======
         if tag.name == "a":
             href = attrs.get("href", "").strip()
-            # 智能补全 URL 前缀
+            
+            if href:
+                # 独家高爽直连：如果是纯用户名/Bot名（包含@，或者包含_bot，或者没有域名点号的纯字符）
+                if not href.startswith(("http://", "https://", "tg://")):
+                    if href.startswith("@") or "_bot" in href.lower() or (len(href) >= 3 and "." not in href):
+                        pure_username = href.lstrip("@")
+                        href = f"https://t.me/{pure_username}"
+            
+            # 智能补全传统的普通 URL 前缀
             if href and not href.startswith(("http://", "https://", "tg://")):
                 href = "https://" + href
+                
             if href.startswith(("http://", "https://", "tg://")):
                 tag["href"] = href
 
+        # ====== 以下原有功能完美保留，不要弄丢了 ======
         elif tag.name == "blockquote":
             if "collapsible" in attrs or "collapsible" in attrs.get("class", []):
                 tag["collapsible"] = ""
@@ -202,18 +213,21 @@ def smart_clean_inline_keyboard(buttons_list: list, card_id: str) -> list:
 
             # 3. 智能处理 URL 类型（包含你的独家高爽直连黑科技）
             if b_type == "url":
-                # 如果用户直接输入的是频道名、Bot名（例如: kongjing_service_bot 或 t.me/xxx）
-                if val and not val.startswith(("http://", "https://")) and ("_bot" in val or len(val) >= 4 and not "." in val):
-                    # 自动将其编译为无缝拉起客户端的官方高爽直连链接
-                    # 如果用户写了 @，先去掉 @
-                    pure_username = val.lstrip("@")
-                    tg_btn["url"] = f"https://t.me/{pure_username}"
-                else:
-                    # 普通外部网址补全
-                    if val and not val.startswith(("http://", "...")): # 补全 http
-                        if not val.startswith(("http://", "https://")):
+                if val:
+                    # 如果用户不小心带了 t.me/ 或 https://t.me/，先统一提取出纯正的用户名
+                    # 比如清洗: "https://t.me/kongjing_service_bot" 或 "t.me/kongjing_service_bot"
+                    temp_val = val.replace("https://", "").replace("http://", "").replace("t.me/", "").lstrip("@")
+                    
+                    # 判断是不是一个纯用户名/Bot名（不包含任何斜杠路径、点号等网址特征）
+                    if "/" not in temp_val and "." not in temp_val:
+                        tg_btn["url"] = f"https://t.me/{temp_val}"
+                    else:
+                        # 普通外部网址补全
+                        if not val.startswith(("http://", "https://", "tg://")):
                             val = "https://" + val
-                    tg_btn["url"] = val if val else "https://t.me"
+                        tg_btn["url"] = val
+                else:
+                    tg_btn["url"] = "https://t.me"
 
             # 4. 智能处理 Web App 类型
             elif b_type == "web_app":

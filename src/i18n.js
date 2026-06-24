@@ -202,6 +202,12 @@ const resources = {
       editor_type_callback: "交互",
       editor_type_switch: "转发",
       editor_type_pay: "支付",
+      editor_code_block: "多行代码块",
+      editor_custom_emoji: "自定义表情",
+      editor_collapsible_quote: "可折叠引用",
+      editor_search_emoji_placeholder: "搜索系统表情...",
+      editor_my_custom_emojis: "我的专属表情库",
+      editor_custom_emoji_tip: "💡 请直接在 TG 客户端将包含 Premium 或自定义表情的消息发送给我们的 Bot，即可在此处自动同步和录入专属表情库。",
 
       // === analytics 数据分析模块 ===
       analytics_title: "卡片数据分析",
@@ -417,6 +423,12 @@ const resources = {
       editor_type_callback: "Data",
       editor_type_switch: "Fwd",
       editor_type_pay: "Pay",
+      editor_code_block: "Code Block",
+      editor_custom_emoji: "Custom Emoji",
+      editor_collapsible_quote: "Collapsible Quote",
+      editor_search_emoji_placeholder: "Search emojis...",
+      editor_my_custom_emojis: "My Exclusive Emojis",
+      editor_custom_emoji_tip: "💡 Send messages with Premium or custom emojis directly to our Bot in Telegram to automatically sync and populate your exclusive emoji vault here.",
 
       // === analytics 数据分析模块 ===
       analytics_title: "Card Analytics",

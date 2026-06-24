@@ -1,10 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
-import { Mark } from '@tiptap/core';
+import { Mark, Node } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
+import Blockquote from '@tiptap/extension-blockquote';
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
+import { createLowlight, common } from 'lowlight';
+import EmojiPicker from 'emoji-picker-react';
 import { 
   FaLayerGroup, FaEye, FaShare, FaHeart, FaMousePointer, 
   FaChartBar, FaTrashAlt, FaEdit, FaChevronDown,
@@ -12,7 +16,7 @@ import {
   FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock,
   FaTelegram,
   FaCheckCircle,
-  FaRegCircle // 👈 🔥 关键修复：把未勾选的空心圆圈图标补在这里！
+  FaRegCircle 
 } from "react-icons/fa";
 
 import { useTranslation } from 'react-i18next';
@@ -56,6 +60,110 @@ const trackClick = async (cardId) => {
     console.warn('trackClick failed', e);
   }
 };
+
+// ==========================================================================
+// Tiptap 高级扩展与 1:1 Telegram 视觉样式配置
+// ==========================================================================
+const lowlight = createLowlight(common);
+
+// 扩展 Blockquote 插件以完美支持 Telegram 原生的 collapsible (可折叠) 属性
+const TelegramBlockquote = Blockquote.extend({
+  addAttributes() {
+    return {
+      collapsible: {
+        default: false,
+        parseHTML: element => element.hasAttribute('collapsible'),
+        renderHTML: attributes => {
+          if (!attributes.collapsible) return {};
+          return { collapsible: '' };
+        },
+      },
+    };
+  },
+});
+
+// 新增 TgEmoji 节点插件以支持 Telegram 自定义表情标签传输
+const TgEmoji = Node.create({
+  name: 'tgEmoji',
+  group: 'inline',
+  inline: true,
+  selectable: true,
+  atom: true,
+  addAttributes() {
+    return {
+      'emoji-id': {
+        default: null,
+        parseHTML: element => element.getAttribute('emoji-id'),
+        renderHTML: attributes => {
+          if (!attributes['emoji-id']) return {};
+          return { 'emoji-id': attributes['emoji-id'] };
+        },
+      },
+    };
+  },
+  // 💡 新增这一段：让 editor.getText() 能够把自定义表情精准识别为 2 个字符的长度
+  renderText() {
+    return '🔥'; 
+  },
+  parseHTML() {
+    return [{ tag: 'tg-emoji' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['tg-emoji', HTMLAttributes, 0];
+  },
+});
+
+// 在编辑器作用域内强行覆盖 Tailwind 带来的样式擦除，并 1:1 仿真还原 Telegram 经典效果
+const editorStyles = `
+  .ProseMirror blockquote {
+    border-left: 3px solid #d97706 !important;
+    background-color: #f8fafc !important;
+    padding: 0.5rem 1rem !important;
+    margin: 0.5rem 0 !important;
+    border-radius: 0 8px 8px 0 !important;
+    color: #475569 !important;
+    position: relative !important;
+  }
+  .ProseMirror blockquote[collapsible]::after {
+    content: "📁 可折叠" !important;
+    position: absolute !important;
+    top: 4px !important;
+    right: 8px !important;
+    font-size: 10px !important;
+    background-color: #e2e8f0 !important;
+    color: #64748b !important;
+    padding: 1px 4px !important;
+    border-radius: 4px !important;
+  }
+  .ProseMirror pre {
+    background: #1e1e1e !important;
+    color: #d4d4d4 !important;
+    font-family: 'Fira Code', Consolas, Monaco, monospace !important;
+    padding: 0.75rem 1rem !important;
+    border-radius: 8px !important;
+    margin: 0.75rem 0 !important;
+    overflow-x: auto !important;
+  }
+  .ProseMirror pre code {
+    background: none !important;
+    color: inherit !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    font-size: 0.85rem !important;
+  }
+  .ProseMirror pre .hljs-comment { color: #6a9955 !important; }
+  .ProseMirror pre .hljs-keyword { color: #569cd6 !important; }
+  .ProseMirror pre .hljs-string { color: #ce9178 !important; }
+  .ProseMirror pre .hljs-number { color: #b5cea8 !important; }
+  .ProseMirror pre .hljs-function { color: #dcdcaa !important; }
+  .ProseMirror tg-emoji {
+    background-color: rgba(217, 119, 6, 0.1) !important;
+    border: 1px dashed #d97706 !important;
+    padding: 0 2px !important;
+    border-radius: 4px !important;
+    display: inline-block !important;
+  }
+`;
 
 export default function App() {
   // 页面路由状态：'home' | 'editor' | 'preview' | 'analytics' | 'recharge' | 'settings' | 'admin'
@@ -330,6 +438,7 @@ export default function App() {
 
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans">
+      <style>{editorStyles}</style>
       {loading && (
         <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center text-xs text-white font-medium">
           <div className="bg-slate-800 px-4 py-2 rounded-xl shadow-md">同步中...</div>
@@ -395,6 +504,8 @@ export default function App() {
     </div>
   );
 }
+
+
 
 function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
   const { t } = useTranslation();
@@ -1693,6 +1804,25 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const [editingButtonPos, setEditingButtonPos] = useState(null);
   const [activeBtnKey, setActiveBtnKey] = useState(null);
   const [btnDraft, setBtnDraft] = useState({ text: '', value: '', btnType: 'url' });
+  const [charCount, setCharCount] = useState(0);
+
+  // 专属自定义表情库状态（数据闭环：由后端 Bot 抓取入库后通过 API 同步回这里）
+  const [customEmojis, setCustomEmojis] = useState([
+    { emoji_id: '5432109876543210123', fallback_char: '🚀' },
+    { emoji_id: '9876543210123456789', fallback_char: '🔥' },
+    { emoji_id: '1234567890123456789', fallback_char: '👑' },
+    { emoji_id: '8888888888888888888', fallback_char: '🎯' }
+  ]);
+
+  // 动态向 head 注册专有全局样式，保证完全不对外部全局 CSS 产生污染
+  useEffect(() => {
+    const styleEl = document.createElement('style');
+    styleEl.innerHTML = editorStyles;
+    document.head.appendChild(styleEl);
+    return () => {
+      document.head.removeChild(styleEl);
+    };
+  }, []);
 
   const detectButtonType = (btn = {}) => {
     if (btn?.web_app) return 'web_app';
@@ -1764,10 +1894,6 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     },
   });
 
-  const emojiList = [
-    "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭","哼","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓","🤗","🤔","🤭","🤫","🤥","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","👹","👺","🤡","💩","👻","💀","☠️","👽","👾","🤖","🎃","😺","😸","😹","😻","😼","😽","🙀","😾"
-  ];
-
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -1775,6 +1901,8 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
         horizontalRule: false,
         link: false,
         underline: false,
+        blockquote: false, // 禁用默认插件，改用支持多维属性的 TelegramBlockquote
+        codeBlock: false,  // 禁用默认插件，改用支持实时代码高亮的 CodeBlockLowlight
         code: {
           HTMLAttributes: {
             class: 'bg-gray-100 text-red-500 px-1.5 py-0.5 rounded font-mono text-sm cursor-pointer mx-0.5',
@@ -1783,6 +1911,9 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       }),
       Underline,
       SpoilerMark,
+      TelegramBlockquote,
+      CodeBlockLowlight.configure({ lowlight }),
+      TgEmoji,
       Link.configure({ openOnClick: false, HTMLAttributes: { class: 'text-blue-500 underline pointer-events-none' } }),
       Placeholder.configure({ placeholder: t('editor_placeholder') }),
     ],
@@ -1790,115 +1921,117 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
     editorProps: {
       attributes: { class: 'focus:outline-none min-h-[140px] text-[15px] leading-[1.4] text-[#000000] max-w-none break-words whitespace-pre-wrap font-sans' },
     },
+    onUpdate({ editor }) {
+      setCharCount(editor.getText().length); 
+    // 💡 新增下面这一段生命周期钩子：当用户点击输入框唤起手机键盘时，菜单雷达自动收起
+    },
+    onFocus() {
+      setShowMenu(false);
+    },
   });
+  // 💡 新增：当首次加载已有卡片时，初始化正确的字数
+  useEffect(() => {
+    if (editor) {
+      setCharCount(editor.getText().length);
+    }
+  }, [editor]);
+  // 💡 自动判断：只要 mediaFile 存在（不管是正在上传还是已经拿到远程URL），就意味着有媒体，上限自动切为 1024
+  const hasMedia = !!mediaFile; 
+  const maxLimit = hasMedia ? 1024 : 4096;
+  const isOverLimit = charCount > maxLimit;
 
   // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
-  // 处理图片或者视频文件（自动上传至后端并获取真实公网 URL）
-const handleMediaChange = async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+  const handleMediaChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-  const previewUrl = URL.createObjectURL(file);
-  
-  // 判断媒体类型：photo、video、gif
-  let mediaType = 'photo';
-  if (file.type.startsWith('video/')) {
-    mediaType = 'video';
-  } else if (file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif') {
-    mediaType = 'gif';
-  }
+    const previewUrl = URL.createObjectURL(file);
+    
+    let mediaType = 'photo';
+    if (file.type.startsWith('video/')) {
+      mediaType = 'video';
+    } else if (file.name.toLowerCase().endsWith('.gif') || file.type === 'image/gif') {
+      mediaType = 'gif';
+    }
 
-  // 设置本地预览状态
-  setMediaFile({ previewUrl, type: mediaType, uploading: true, remoteUrl: null });
+    setMediaFile({ previewUrl, type: mediaType, uploading: true, remoteUrl: null });
+    try {
+      if (mediaType === 'video') {
+        const CHUNK_SIZE = 2 * 1024 * 1024;
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const uploadId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        let finalRemoteUrl = null;
 
-  try {
-    // 🎬 【新增分流逻辑】：如果是视频，启动强悍的分片上传机制
-    if (mediaType === 'video') {
-      const CHUNK_SIZE = 2 * 1024 * 1024; // 规定每片大小为 2MB
-      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-      // 生成一个本次上传的唯一标识
-      const uploadId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      let finalRemoteUrl = null;
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+          const start = chunkIndex * CHUNK_SIZE;
+          const end = Math.min(file.size, start + CHUNK_SIZE);
+          const chunk = file.slice(start, end);
 
-      // 循环切片并串行发送给后端
-      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-        const start = chunkIndex * CHUNK_SIZE;
-        const end = Math.min(file.size, start + CHUNK_SIZE);
-        const chunk = file.slice(start, end);
+          const formData = new FormData();
+          formData.append('file_chunk', chunk, file.name); 
+          formData.append('chunk_index', chunkIndex);
+          formData.append('total_chunks', totalChunks);
+          formData.append('upload_id', uploadId);
+          formData.append('filename', file.name);
 
+          const response = await fetch(`${BASE_URL}/upload/chunk`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: formData,
+          });
+
+          if (!response.ok) {
+            throw new Error(`视频分片 [${chunkIndex + 1}/${totalChunks}] 上传失败`);
+          }
+
+          const data = await response.json();
+          if (chunkIndex === totalChunks - 1) {
+            if (!data?.url) throw new Error('后端合并后未能返回有效视频公网地址');
+            finalRemoteUrl = data.url;
+          }
+        }
+
+        setMediaFile((prev) => ({
+          ...prev,
+          remoteUrl: finalRemoteUrl,
+          previewUrl: prev.previewUrl,
+          uploading: false,
+        }));
+      } else {
         const formData = new FormData();
-        // 严格对齐后端要求的参数名
-        formData.append('file_chunk', chunk, file.name); 
-        formData.append('chunk_index', chunkIndex);
-        formData.append('total_chunks', totalChunks);
-        formData.append('upload_id', uploadId);
-        formData.append('filename', file.name);
+        formData.append('file', file);
 
-        const response = await fetch(`${BASE_URL}/upload/chunk`, {
+        const response = await fetch(`${BASE_URL}/upload`, {
           method: 'POST',
-          headers: getAuthHeaders(), // 注意：确保这里没有强行指定 'Content-Type': 'application/json'
+          headers: getAuthHeaders(),
           body: formData,
         });
-
         if (!response.ok) {
-          throw new Error(`视频分片 [${chunkIndex + 1}/${totalChunks}] 上传失败`);
+          throw new Error(`图片上传失败：${response.status}`);
         }
 
         const data = await response.json();
-        // 到了最后一片，后端会完成合并压缩并吐出最终的 url
-        if (chunkIndex === totalChunks - 1) {
-          if (!data?.url) throw new Error('后端合并后未能返回有效视频公网地址');
-          finalRemoteUrl = data.url;
+        if (!data?.url) {
+          throw new Error('后端返回无效图片上传地址');
         }
+
+        setMediaFile((prev) => ({
+          ...prev,
+          remoteUrl: data.url,
+          previewUrl: prev.previewUrl,
+          uploading: false,
+        }));
       }
 
-      // 视频分片大功告成，更新状态
-      setMediaFile((prev) => ({
-        ...prev,
-        remoteUrl: finalRemoteUrl,
-        previewUrl: prev.previewUrl,
-        uploading: false,
-      }));
-
-    } else {
-      // 🖼️ 如果是普通图片/GIF，保持你原本的常规上传通道不变
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(`${BASE_URL}/upload`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`图片上传失败：${response.status}`);
-      }
-
-      const data = await response.json();
-      if (!data?.url) {
-        throw new Error('后端返回无效图片上传地址');
-      }
-
-      setMediaFile((prev) => ({
-        ...prev,
-        remoteUrl: data.url,
-        previewUrl: prev.previewUrl,
-        uploading: false,
-      }));
+    } catch (uploadError) {
+      console.error('媒体上传失败:', uploadError);
+      alert('媒体文件上传失败，请重试。');
+      setMediaFile(null);
     }
-
-  } catch (uploadError) {
-    console.error('媒体上传失败:', uploadError);
-    alert('媒体文件上传失败，请重试。');
-    // 上传失败时，清除 mediaFile 防止误保存
-    setMediaFile(null);
-  }
-};
+  };
 
   const triggerPublish = () => {
     if (!editor) return;
-    // 改为判断 uploading 状态，而不是只针对图片
     if (mediaFile?.uploading) {
       alert(t('editor_uploading_tip'));
       return;
@@ -1909,21 +2042,18 @@ const handleMediaChange = async (e) => {
      ? (pureText.slice(0, 15) + (pureText.length > 15 ? "..." : "")) 
      : t('editor_unnamed_native');
 
-    // 🟢 【终极修正】直接把原汁原味的、包含 text/type/value 的纯净矩阵传过去
-    // 不要在前端自作聪明地做任何转型过滤，全部交给后端的强力编译器
     onPublish({
       id: cardToEdit ? cardToEdit.id : null,
       title: shortTitle, 
       status: cardToEdit ? cardToEdit.status : "未发布",
       content: editor.getHTML(),
-      buttons: Array.isArray(buttons) ? buttons : [], // 🟢 保持最纯净的矩阵形态原样上报
-      img: mediaFile?.remoteUrl || "",  // 禁止保存 blob URL，只保存公网地址或空字符串
-      media_type: mediaFile?.type || 'photo',  // 同时保存媒体类型
+      buttons: Array.isArray(buttons) ? buttons : [], 
+      img: mediaFile?.remoteUrl || "",  
+      media_type: mediaFile?.type || 'photo',  
       analytics: cardToEdit ? cardToEdit.analytics : { views: 0, shares: 0, likes: 0, clicks: 0 }
     });
   };
 
-  // 🟢 核心整编重构：通过纯净的 actionId 来精准驱动底层富文本架构，不再绑定中文。
   const handleMenuActionById = (e, actionId) => {
     e.preventDefault(); e.stopPropagation();
     if (!editor) return;
@@ -1934,14 +2064,31 @@ const handleMediaChange = async (e) => {
       case 'italic': editor.chain().toggleItalic().run(); break;
       case 'underline': editor.chain().toggleUnderline().run(); break;
       case 'strike': editor.chain().toggleStrike().run(); break;
-      case 'quote': editor.chain().toggleBlockquote().run(); break;
+      case 'quote': 
+        if (editor.isActive('blockquote', { collapsible: false })) {
+          editor.chain().focus().unsetBlockquote().run();
+        } else {
+          editor.chain().focus().setBlockquote({ collapsible: false }).run();
+        }
+        break;
+      case 'collapsible_quote':
+        if (editor.isActive('blockquote', { collapsible: true })) {
+          editor.chain().focus().unsetBlockquote().run();
+        } else {
+          editor.chain().focus().setBlockquote({ collapsible: true }).run();
+        }
+        break;
+      case 'code_block': 
+        editor.chain().focus().toggleCodeBlock().run(); 
+        break;
       case 'copy': editor.chain().focus().toggleCode().run(); break;
       case 'spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
       case 'clear': editor.chain().unsetAllMarks().clearNodes().run(); break;
       case 'emoji': setMenuView('emoji'); break;
+      case 'custom_emoji': setMenuView('custom_emoji'); break;
       case 'link':
         if (from === to) { 
-          alert('请先在编辑器中选中一段文字，再插入内嵌链接'); // 后续视需要加进字典
+          alert('请先在编辑器中选中一段文字，再插入内嵌链接');
           return;
         }
         setMenuView('link'); break;
@@ -1979,18 +2126,15 @@ const handleMediaChange = async (e) => {
     const { rowIndex, colIndex } = editingButtonPos;
     const rawText = (btnDraft.text || '').trim();
     let rawValue = (btnDraft.value || '').trim();
-    // 如果是 inline 切换查询类型，自动规范化加上 @ 符号
     if (btnDraft.btnType === 'switch' && rawValue && !rawValue.startsWith('@')) {
       rawValue = `@${rawValue}`;
     }
 
-    // 🚀【核心整编】前端只生成纯净的 text、type、value，让后端发布器和编译器去读
     const nextButton = {
       text: rawText || t('editor_unnamed_btn'),
       type: btnDraft.btnType || 'url',
       value: rawValue
     };
-    // 更新按钮矩阵状态
     setButtons((prev) =>
       prev.map((row, r) =>
         r === rowIndex
@@ -2002,7 +2146,16 @@ const handleMediaChange = async (e) => {
     setEditingButtonPos(null);
   };
 
-  // 🟢 添加了固定的内部 id，label 使用 t() 映射
+  // 动态高亮函数：对独立拆分出来的复合型引用和特定格式块提供精准的状态追踪响应
+  const isMenuItemActive = (item) => {
+    if (!editor) return false;
+    if (item.id === 'quote') return editor.isActive('blockquote', { collapsible: false });
+    if (item.id === 'collapsible_quote') return editor.isActive('blockquote', { collapsible: true });
+    if (item.active) return editor.isActive(item.active);
+    return false;
+  };
+
+  // 工具栏核心项：加入代码块、自定义表情与可折叠引用的全新映射节点
   const menuItems = [
     { id: "bold", icon: "B", label: t('editor_bold'), active: 'bold' }, 
     { id: "italic", icon: "I", label: t('editor_italic'), active: 'italic' },
@@ -2010,27 +2163,36 @@ const handleMediaChange = async (e) => {
     { id: "strike", icon: "S", label: t('editor_strike'), active: 'strike' },
     { id: "copy", icon: "📋", label: t('common_copy') }, 
     { id: "spoiler", icon: "🫥", label: t('editor_spoiler') },
+    { id: "code_block", icon: "💻", label: t('editor_code_block'), active: 'codeBlock' }, 
     { id: "emoji", icon: "😀", label: t('editor_emoji') }, 
+    { id: "custom_emoji", icon: "🎭", label: t('editor_custom_emoji') }, 
     { id: "link", icon: "🔗", label: t('editor_inline_link'), active: 'link' },
     { id: "button", icon: "🔘", label: t('editor_edit_btn') }, 
     { id: "external", icon: "↗", label: t('editor_external_link') },
-    { id: "quote", icon: "—", label: t('editor_quote'), active: 'blockquote' }, 
+    { id: "quote", icon: "—", label: t('editor_quote') }, 
+    { id: "collapsible_quote", icon: "🗂️", label: t('editor_collapsible_quote') }, 
     { id: "clear", icon: "扫", label: t('editor_clear_format') },
     { id: "undo", icon: "↩", label: t('editor_undo') }, 
     { id: "redo", icon: "↪", label: t('editor_redo') }
   ];
 
-  return (
+return (
     <div className="flex flex-col h-screen bg-[#E7EBF0] text-gray-800 max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
+      
+      {/* 1. 顶部导航栏 */}
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
         <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
         <h1 className="text-sm font-bold text-gray-700">{t('editor_title')}</h1>
         <button onClick={triggerPublish} className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md active:scale-95 transition-transform">{t('editor_save_card')}</button>
       </div>
 
+      {/* 2. 主体可滚动区域 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-80">
         
+        {/* 卡片预览总容器 */}
         <div className="w-full max-w-[330px] mx-auto bg-white rounded-[15px] overflow-hidden shadow-sm border border-gray-100 flex flex-col">
+          
+          {/* 媒体卡片标题与上传栏 */}
           <div className="p-3 border-b border-gray-50 bg-slate-50/50 flex justify-between items-center">
             <span className="text-[11px] text-gray-400 font-bold">{t('editor_media_title')}</span>
             <button onClick={() => fileInputRef.current.click()} className="text-xs text-blue-500 font-bold hover:underline">
@@ -2039,6 +2201,7 @@ const handleMediaChange = async (e) => {
             <input type="file" ref={fileInputRef} onChange={handleMediaChange} accept="image/*,video/*" className="hidden" />
           </div>
 
+          {/* 媒体文件预览区 */}
           {mediaFile && (
             <div className="w-full max-h-[380px] min-h-[160px] min-w-[150px] bg-[#f4f4f7] relative flex items-center justify-center overflow-hidden">
               {mediaFile.type === 'video' ? (
@@ -2052,11 +2215,20 @@ const handleMediaChange = async (e) => {
             </div>
           )}
 
-          <div className="p-3 bg-white min-h-[140px]">
+          {/* 富文本编辑器输入区 */}
+          <div className="p-3 bg-white min-h-[140px] relative pb-7">
             <p className="mb-2 text-[10px] text-gray-400">{t('editor_btn_matrix_tip')}</p>
             <EditorContent editor={editor} onFocus={() => setShowMenu(false)} />
+            <div className={`absolute bottom-2 right-3 text-[10px] font-mono px-1.5 py-0.5 rounded-md select-none transition-all ${
+              isOverLimit 
+                ? 'bg-red-50 text-red-500 font-bold animate-pulse border border-red-200'
+                : 'text-gray-400 bg-slate-50 border border-slate-100'
+            }`}>
+              {charCount} / {maxLimit}
+            </div>
           </div>
 
+          {/* 动态内联按钮矩阵展示区 */}
           {buttons.length > 0 && (
             <div className="p-2 border-t border-gray-100 bg-white space-y-[1.5px]">
               {buttons.map((row, rowIndex) => (
@@ -2100,27 +2272,54 @@ const handleMediaChange = async (e) => {
               ))}
             </div>
           )}
-        </div>
+        </div> {/* 闭合：卡片预览总容器 */}
 
-        {/* 悬浮主编辑呼起圆盘 */}
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center select-none">
-          {showMenu && (
-            <div className="mb-4 bg-white/95 backdrop-blur-md rounded-[24px] shadow-2xl border border-gray-200/80 p-3 w-[290px] grid grid-cols-4 gap-2 animate-in fade-in slide-in-from-bottom-4 duration-200 max-h-[220px] overflow-y-auto">
-              {menuView === 'main' && menuItems.map((item, index) => (
-                <button
-                  key={index}
-                  onClick={(e) => handleMenuActionById(e, item.id)} // 🟢 修改为基于固定 ID 的逻辑分发
-                  className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-90 ${
-                    item.active && editor?.isActive(item.active) ? 'bg-blue-50 text-blue-600 font-bold' : 'hover:bg-gray-50 text-gray-600'
-                  }`}
-                >
-                  <span className="text-base mb-1">{item.icon}</span>
-                  <span className="text-[10px] scale-90 tracking-tighter opacity-80">{item.label}</span>
-                </button>
-              ))}
+      </div> {/* 💡 核心修复点：在这里精准闭合第 2 步的“主体可滚动区域 (flex-1 overflow-y-auto)” */}
 
+      {/* 3. 悬浮主编辑呼起圆盘 (利用 absolute 固定在页面最底部，不跟随上面滚动) */}
+      <div className="absolute bottom-0 left-0 right-0 z-40 flex flex-col select-none">
+        
+        {/* 1/3 高度的全宽菜单功能抽屉 */}
+        {showMenu && (
+          <div className="bg-white rounded-t-[24px] shadow-[0_-10px_30px_rgba(0,0,0,0.08)] border-t border-gray-200/60 p-4 w-full h-[280px] flex flex-col animate-in slide-in-from-bottom duration-200">
+            
+            {/* 抽屉顶部控制小吧台 */}
+            <div className="flex justify-between items-center pb-2 mb-2 border-b border-gray-100 shrink-0">
+              <span className="text-[11px] font-bold text-gray-400 tracking-wider">
+                {menuView === 'main' ? t('editor_btn_config_title') : t('common_back')}
+              </span>
+              <button 
+                onClick={() => setShowMenu(false)} 
+                className="text-gray-400 hover:text-gray-600 text-xs font-bold px-2 py-0.5 rounded-full bg-gray-50 active:scale-90 transition-transform"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* 抽屉内部可滚动视图视窗 */}
+            <div className="flex-1 overflow-y-auto">
+              
+              {/* 视图A：主功能菜单 */}
+              {menuView === 'main' && (
+                <div className="grid grid-cols-4 gap-3 pb-4">
+                  {menuItems.map((item, index) => (
+                    <button
+                      key={index}
+                      onClick={(e) => handleMenuActionById(e, item.id)}
+                      className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all active:scale-90 ${
+                        isMenuItemActive(item) ? 'bg-blue-50 text-blue-600 font-bold' : 'hover:bg-gray-50 text-gray-600'
+                      }`}
+                    >
+                      <span className="text-xl mb-1">{item.icon}</span>
+                      <span className="text-[11px] tracking-tight opacity-90">{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* 视图B：矩阵行列配置视图 */}
               {menuView === 'grid' && (
-                <div className="col-span-4 p-2 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                <div className="p-1 space-y-3 animate-in fade-in zoom-in-95 duration-150">
                   <div className="flex justify-between items-center border-b pb-1">
                     <span className="text-xs font-bold text-gray-700">{t('editor_config_matrix')}</span>
                     <span className="text-blue-500 text-xs cursor-pointer font-bold" onClick={() => setMenuView('main')}>{t('common_back')}</span>
@@ -2139,34 +2338,70 @@ const handleMediaChange = async (e) => {
                 </div>
               )}
 
+              {/* 视图C：内嵌文字超级链接视图 */}
               {menuView === 'link' && (
-                <div className="col-span-4 p-2 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                <div className="p-1 space-y-3 animate-in fade-in zoom-in-95 duration-150">
                   <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-700">{t('editor_insert_link_title')}</span><span className="text-gray-400 text-xs cursor-pointer" onClick={() => setMenuView('main')}>{t('common_cancel')}</span></div>
                   <input id="linkUrl" placeholder="https://..." className="w-full border-b py-1.5 text-xs outline-none text-blue-500" autoFocus />
                   <button onClick={() => { const url = document.getElementById('linkUrl').value; if (url) { editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run(); } setMenuView('main'); }} className="w-full bg-blue-600 text-white py-2 rounded-xl text-xs font-bold">{t('editor_confirm_insert')}</button>
                 </div>
               )}
 
+              {/* 视图D：标准原生 Emoji 开源组件视图 */}
               {menuView === 'emoji' && (
-                <div className="p-3 h-full overflow-y-auto col-span-4">
-                  <div className="flex justify-between items-center pb-2 px-2 border-b mb-2 sticky top-0 bg-white"><span className="text-xs font-bold text-gray-700">{t('editor_common_emojis')}</span><span className="text-blue-500 text-xs font-bold cursor-pointer" onClick={() => setMenuView('main')}>{t('common_back')}</span></div>
-                  <div className="grid grid-cols-8 gap-2 pb-10">
-                    {emojiList.map((emoji, idx) => (
-                      <button key={idx} onMouseDown={(e) => handleInsertEmoji(e, emoji)} className="text-lg hover:scale-125 transition-transform p-0.5">{emoji}</button>
+                <div className="p-1 flex flex-col min-h-[200px]">
+                  <div className="flex justify-between items-center pb-2 px-2 border-b mb-2 bg-white">
+                    <span className="text-xs font-bold text-gray-700">{t('editor_common_emojis')}</span>
+                    <span className="text-blue-500 text-xs font-bold cursor-pointer" onClick={() => setMenuView('main')}>{t('common_back')}</span>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <EmojiPicker onEmojiClick={(emojiData) => { if (editor) editor.chain().focus().insertContent(emojiData.emoji).run(); }} autoFocusSearch={false} theme="light" searchPlaceholder={t('editor_search_emoji_placeholder')} width="100%" height="180px" previewConfig={{ showPreview: false }} skinTonesDisabled={true} />
+                  </div>
+                </div>
+              )}
+
+              {/* 视图E：TG 特性专属自定义表情包视图 */}
+              {menuView === 'custom_emoji' && (
+                <div className="p-1 min-h-[200px]">
+                  <div className="flex justify-between items-center pb-2 px-2 border-b mb-2 bg-white">
+                    <span className="text-xs font-bold text-gray-700">{t('editor_my_custom_emojis')}</span>
+                    <span className="text-blue-500 text-xs font-bold cursor-pointer" onClick={() => setMenuView('main')}>{t('common_back')}</span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 p-2 text-center bg-amber-50/60 rounded-lg mb-2">{t('editor_custom_emoji_tip')}</p >
+                  <div className="grid grid-cols-4 gap-2 pb-4">
+                    {customEmojis.map((item, idx) => (
+                      <button key={idx} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (editor) { editor.chain().focus().insertContent(`<tg-emoji emoji-id="${item.emoji_id}">${item.fallback_char}</tg-emoji>`).run(); } }} className="flex flex-col items-center justify-center p-1.5 border border-slate-100 rounded-xl hover:bg-slate-50 transition-all active:scale-95" >
+                        <span className="text-xl mb-1">{item.fallback_char}</span>
+                        <span className="text-[8px] text-gray-400 scale-90 truncate max-w-full">ID:{item.emoji_id.slice(-4)}</span>
+                      </button>
                     ))}
                   </div>
                 </div>
               )}
-            </div>
-          )}
+            </div> {/* 闭合： flex-1 overflow-y-auto 抽屉内部滚动视窗 */}
+          </div> 
 
-          <button onClick={() => { setShowMenu(!showMenu); setMenuView('main'); }} className="bg-slate-900 text-white px-6 py-3 rounded-full flex items-center gap-2 shadow-xl border border-slate-800 active:scale-95 transition-transform font-bold text-xs tracking-wider">
-            <span>🔘</span> {t('editor_btn_config_title')}
+        )}
+        <div className="bg-white border-t border-gray-100 p-3 flex justify-center shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.03)] pb-safe">
+          <button 
+            onClick={() => { 
+              const nextState = !showMenu;
+              setShowMenu(nextState);
+              setMenuView('main');
+              if (nextState && editor) {
+                editor.commands.blur();
+              }
+            }} 
+            className="w-full max-w-[24px] bg-slate-900 text-white py-2.5 rounded-full flex items-center justify-center gap-2 shadow-md border border-slate-800 active:scale-95 transition-transform font-bold text-xs tracking-wider"
+            style={{ width: '80%' }}
+          >
+            <span>{showMenu ? "✕" : "🔘"}</span> {showMenu ? t('common_close') || '收起菜单' : t('editor_btn_config_title')}
           </button>
         </div>
-      </div>
 
-      {/* 底部按钮配置行为高精弹窗 */}
+      </div> {/* 闭合：悬浮主编辑呼起圆盘容器 */}
+
+      {/* 4. 底部单个按钮高精度独立配置弹窗 (Modal 遮罩层) */}
       {showBtnModal && editingButtonPos && (
         <div className="absolute inset-0 bg-black/40 backdrop-blur-xs flex items-end justify-center z-50 animate-in fade-in duration-200" onClick={() => setShowBtnModal(false)}>
           <div className="w-full bg-white rounded-t-[30px] p-5 pb-8 space-y-4 shadow-2xl animate-in slide-in-from-bottom-10 duration-200 max-h-[90%] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -2218,12 +2453,14 @@ const handleMediaChange = async (e) => {
               <button onClick={() => setShowBtnModal(false)} className="flex-1 border py-2.5 rounded-xl text-xs font-bold text-gray-500 hover:bg-slate-50 active:scale-98 transition-transform">{t('common_cancel')}</button>
               <button onClick={saveButtonConfig} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl text-xs font-bold shadow-md shadow-blue-100 hover:bg-blue-700 active:scale-98 transition-transform">{t('common_confirm')}</button>
             </div>
-          </div>
-        </div>
+          </div> {/* 闭合：Modal内层白色卡片容器 */}
+        </div> 
       )}
-    </div>
+
+    </div> 
   );
-}
+} // 闭合整个 EditorScreen 组件函数
+
 
 /* ==========================================================================
    3. 全屏卡片预览页面组件 (PreviewScreen)
