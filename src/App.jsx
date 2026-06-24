@@ -2382,7 +2382,7 @@ return (
           </div> 
 
         )}
-        <div className="bg-white border-t border-gray-100 p-3 flex justify-center shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.03)] pb-safe">
+        <div className="flex justify-center w-full mb-4 shrink-0 pb-safe pointer-events-none">
           <button 
             onClick={() => { 
               const nextState = !showMenu;
@@ -2392,10 +2392,10 @@ return (
                 editor.commands.blur();
               }
             }} 
-            className="w-full max-w-[24px] bg-slate-900 text-white py-2.5 rounded-full flex items-center justify-center gap-2 shadow-md border border-slate-800 active:scale-95 transition-transform font-bold text-xs tracking-wider"
-            style={{ width: '80%' }}
+            className="pointer-events-auto bg-slate-900/95 backdrop-blur-xs text-white py-1.5 px-4 rounded-full flex items-center justify-center gap-1.5 shadow-xl border border-slate-800 active:scale-95 transition-transform font-bold text-xs whitespace-nowrap"
           >
-            <span>{showMenu ? "✕" : "🔘"}</span> {showMenu ? t('common_close') || '收起菜单' : t('editor_btn_config_title')}
+            <span>{showMenu ? "✕" : "⚙️"}</span> 
+            {showMenu ? t('common_close') || '收起菜单' : t('editor_btn_config_title')}
           </button>
         </div>
 
