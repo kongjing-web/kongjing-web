@@ -133,6 +133,11 @@ const resources = {
       recharge_tax_tip: "* 官方原生通道已包含苹果/安卓商店 30% 平台抽成税点补贴",
       recharge_stars_success: "🎉 恭喜！您已成功通过官方星星完成订阅，VIP 权限已全自动秒级到账！",
       recharge_pay_cancelled: "💡 支付已取消",
+      recharge_select_package: "选择订阅套餐",
+      recharge_days: "天",
+      package_week: "VIP高级会员 - 周卡",
+      package_month: "VIP高级会员 - 月卡",
+      package_quarter: "VIP高级会员 - 季卡",      
 
       // === settings 设置模块 ===
       settings_title: "设置",
@@ -354,6 +359,11 @@ const resources = {
       recharge_tax_tip: "* Stars price includes 30% App Store/Google Play platform fees.",
       recharge_stars_success: "🎉 Congrats! VIP access has been automatically activated via Stars!",
       recharge_pay_cancelled: "💡 Payment Cancelled",
+      recharge_select_package: "Select Subscription Plan",
+      recharge_days: "Days",
+      package_week: "VIP Premium Member - Weekly",
+      package_month: "VIP Premium Member - Monthly",
+      package_quarter: "VIP Premium Member - Quarterly",      
 
       // === settings 设置模块 ===
       settings_title: "Settings",

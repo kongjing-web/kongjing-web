@@ -1463,8 +1463,14 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
 function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   const { t } = useTranslation();
-  // 后台控制的动态多通道价格状态
-  const [livePrices, setLivePrices] = useState({ crypto_usdt: 2.0, tg_stars: 143 });
+  
+  // 🎯 核心升级 1：初始化默认套餐列表，进行安全降级兜底
+  const [packages, setPackages] = useState([
+    { package_id: "week", name: "周套餐", price_usd: 2.0, price_stars: 143, duration_days: 7 },
+    { package_id: "month", name: "月套餐", price_usd: 7.0, price_stars: 500, duration_days: 30 },
+    { package_id: "quarter", name: "季套餐", price_usd: 18.0, price_stars: 1200, duration_days: 90 }
+  ]);
+  const [selectedPackageId, setSelectedPackageId] = useState("week"); // 默认选中周卡
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -1472,7 +1478,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
   const userId = tgUser?.id || currentUser?.id || currentUser?.telegram_id;
 
-  // 页面初始化时，自动去后端拉取最新由你调控控制的价格
+  // 🎯 核心升级 2：自动去后端拉取最新套餐组合与价格调控
   useEffect(() => {
     async function fetchPrices() {
       try {
@@ -1481,7 +1487,15 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.prices) setLivePrices(data.prices);
+          // 如果后端完美返回了多套餐数组，直接更新状态
+          if (data.packages && data.packages.length > 0) {
+            setPackages(data.packages);
+          } else if (data.prices) {
+            // 优雅降级：如果老接口只返回了 prices 单一字段，自动包成标准周卡
+            setPackages([
+              { package_id: "week", name: "标准套餐", price_usd: data.prices.usd || 2.0, price_stars: data.prices.tg_stars || 143, duration_days: 7 }
+            ]);
+          }
         }
       } catch (err) {
         console.error("拉取后台控制定价失败，降级使用标准预设价格", err);
@@ -1490,10 +1504,13 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
     fetchPrices();
   }, []);
 
-  // 通道一：你原本的 Crypto Bot（USDT）支付网关触发器
+  // 🎯 核心联动：动态切算出当前用户选中的那款套餐数据
+  const currentPkg = packages.find(p => p.package_id === selectedPackageId) || packages[0];
+
+  // 通道一：Crypto Bot（USDT）支付网关触发器
   const handleCryptoPay = async () => {
     if (!userId) {
-      alert(t('auth_fail')); // 未检测到您的 Telegram 账号信息，降级通用报错或提示
+      alert(t('auth_fail'));
       return;
     }
     setLoading(true);
@@ -1502,7 +1519,11 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
       const response = await fetch(`${BASE_URL}/vip/create_invoice`, {
         method: 'POST',
         headers: getAuthHeaders('application/json'),
-        body: JSON.stringify({ telegram_id: String(userId) }) // 你的高级身份防御双保险
+        // 🚀 同步压入 package_id 传给后端
+        body: JSON.stringify({ 
+          telegram_id: String(userId),
+          package_id: selectedPackageId 
+        })
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -1518,7 +1539,6 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
         } else {
           window.open(openUrl, '_blank');
         }
-        // 轮询同步权益
         triggerPolling();
       }
     } catch (err) {
@@ -1528,7 +1548,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
     }
   };
 
-  // 通道二：核心新增 —— 官方 Stars 原生高安全级收银台
+  // 通道二：官方 Stars 原生高安全级收银台
   const handleStarsPay = async () => {
     if (!userId) {
       alert(t('auth_fail'));
@@ -1537,11 +1557,14 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
     setLoading(true);
     setError(null);
     try {
-      // 强力校验：既走 getAuthHeaders 密文，又在 body 丢明文 ID 供后端强力交叉审计
       const response = await fetch(`${BASE_URL}/payment/create_stars_invoice`, {
         method: 'POST',
         headers: getAuthHeaders('application/json'),
-        body: JSON.stringify({ telegram_id: String(userId) })
+        // 🚀 核心对齐：把选中的套餐 ID 安全发送给严防死守版后台接口
+        body: JSON.stringify({ 
+          telegram_id: String(userId),
+          package_id: selectedPackageId 
+        })
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -1550,7 +1573,6 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
       
       const data = await response.json();
       if (data.status === 'success' && data.pay_url) {
-        // ⭐ 原生大招：调用 TG 内置底层 API，唤起无需跳转的精致指纹支付弹窗
         window.Telegram?.WebApp?.openInvoice(data.pay_url, function(status) {
           if (status === 'paid') {
             alert(t('recharge_stars_success'));
@@ -1570,7 +1592,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
     }
   };
 
-  // 你原本的轮询复用逻辑
+  // 轮询复用逻辑
   const triggerPolling = () => {
     if (onRefreshUser) {
       let attempts = 0;
@@ -1606,27 +1628,53 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
           
           {error && <div className="mt-4 text-sm text-red-500">{error}</div>}
 
-          {/* 通道一：Crypto 支付按钮 */}
+          {/* 🚀 核心新增：精心定制的极简下拉套餐选择盒（Zen / 工业黑金质感） */}
+          <div className="mt-6 mb-4">
+            <label className="block text-xs font-semibold text-slate-400 mb-2 tracking-wider uppercase">
+              {t('recharge_select_package')}
+            </label>
+            <div className="relative">
+              <select
+                value={selectedPackageId}
+                onChange={(e) => setSelectedPackageId(e.target.value)}
+                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3.5 text-sm font-medium text-gray-800 outline-none focus:border-blue-500 appearance-none shadow-sm transition-all duration-200"
+                style={{
+                  backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
+                  backgroundRepeat: 'no-repeat',
+                  backgroundPosition: 'right 16px center',
+                  backgroundSize: '16px'
+                }}
+              >
+                {packages.map((pkg) => (
+                  <option key={pkg.package_id} value={pkg.package_id}>
+                    {t(`package_${pkg.package_id}`)} ({pkg.duration_days} {t('recharge_days')})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* 通道一：Crypto 支付按钮（联动已选套餐价格） */}
           <button
             onClick={handleCryptoPay}
             disabled={loading}
-            className="mt-6 w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-blue-700 disabled:bg-blue-300 flex justify-between items-center"
+            className="mt-4 w-full rounded-2xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-md hover:bg-blue-700 disabled:bg-blue-300 flex justify-between items-center transition-all duration-200"
           >
             <span>{loading ? t('recharge_processing') : t('recharge_pay_crypto')}</span>
-            <span className="bg-blue-700 px-2.5 py-0.5 rounded-lg text-xs font-black">{livePrices.crypto_usdt} USDT</span>
+            <span className="bg-blue-700 px-2.5 py-0.5 rounded-lg text-xs font-black">{currentPkg.price_usd} USDT</span>
           </button>
 
-          {/* 通道二：官方 Stars 支付按钮（自动计算并包含了30%溢价） */}
+          {/* 通道二：官方 Stars 支付按钮（联动已选套餐价格） */}
           <button
             onClick={handleStarsPay}
             disabled={loading}
-            className="mt-3 w-full rounded-2xl bg-amber-500 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-amber-600 disabled:bg-amber-300 flex justify-between items-center"
+            className="mt-3 w-full rounded-2xl bg-amber-500 px-4 py-3.5 text-sm font-bold text-white shadow-md hover:bg-amber-600 disabled:bg-amber-300 flex justify-between items-center transition-all duration-200"
           >
             <span>{loading ? t('recharge_activating') : t('recharge_pay_stars')}</span>
-            <span className="bg-amber-600 px-2.5 py-0.5 rounded-lg text-xs font-black">⭐ {livePrices.tg_stars}</span>
+            <span className="bg-amber-600 px-2.5 py-0.5 rounded-lg text-xs font-black">⭐ {currentPkg.price_stars}</span>
           </button>
           
-          <div className="pt-2 text-[10px] text-gray-400 text-center leading-normal">
+          <div className="pt-3 text-[10px] text-gray-400 text-center leading-normal">
             {t('recharge_tax_tip')}
           </div>
         </div>

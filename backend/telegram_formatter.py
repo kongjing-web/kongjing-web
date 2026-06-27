@@ -5,7 +5,8 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 ALLOWED_TAGS = {
     "b", "strong", "i", "em", "u", "s", "strike",
-    "code", "pre", "a", "blockquote", "tg-spoiler"
+    "code", "pre", "a", "blockquote", "tg-spoiler",
+    "tg-emoji"  # 允许 Telegram 官方的专属表情标签
 }
 
 
@@ -26,14 +27,12 @@ def normalize_spoilers(html: str) -> str:
     # 替换自定义的 <spoiler> 标签
     html = re.sub(r'<spoiler[^>]*?>', '<tg-spoiler>', html, flags=re.IGNORECASE)
 
-    # 统一闭合标签（注意：由于前面已经把特定的 span 换成了 tg-spoiler，这里需要特殊处理）
-    # 为了防止误杀正常的 </span>，我们可以配合 BeautifulSoup 自动修正，或者先做基础替换
+    # 统一闭合标签
     html = html.replace("</spoiler>", "</tg-spoiler>")
 
-    # 利用 DOM 树做二次校正：如果发现加粗嵌套在剧透里面导致的死穴，进行强制外翻换位
     soup = BeautifulSoup(html, "html.parser")
 
-    # 兜底：如果有些 span 漏网了，通过 DOM 属性再次捞一遍
+    # 兜底：通过 DOM 属性再次捞一遍剧透
     for span in soup.find_all("span"):
         attrs_str = str(span.attrs).lower()
         if "spoiler" in attrs_str:
@@ -41,20 +40,14 @@ def normalize_spoilers(html: str) -> str:
             new_tag.extend(span.contents)
             span.replace_with(new_tag)
 
-    # 【核心修正】Telegram 规范校正：如果 b/strong/i/u 在 tg-spoiler 外面，强制把 tg-spoiler 翻到最外层
+    # Telegram 规范校正：如果加粗/斜体等在剧透外面，强制换位
     for parent_name in ["b", "strong", "i", "em", "u", "s"]:
         for parent_tag in soup.find_all(parent_name):
             child_spoiler = parent_tag.find("tg-spoiler")
             if child_spoiler:
-                # 发现错误嵌套，开始换位
-                # 把里面的文本抽出来，在外面套上父级标签
                 inner_tag = soup.new_tag(parent_name)
                 inner_tag.extend(child_spoiler.contents)
-
-                # 让 tg-spoiler 包裹新的内层标签
                 child_spoiler.contents = [inner_tag]
-
-                # 拔除外层多余的壳
                 parent_tag.replace_with(child_spoiler)
 
     return str(soup)
@@ -64,6 +57,36 @@ def process_and_unwrap_tags(soup: BeautifulSoup):
     """
     处理不兼容标签，保留换行排版
     """
+    # 🚀 【核心升级】代码块强力扁平化引擎：彻底杜绝多行代码块消失的死穴！
+    # Telegram 严禁 pre/code 内部嵌套任何其他 HTML 标签。这里必须提纯为纯文本。
+    for pre_tag in soup.find_all("pre"):
+        code_tag = pre_tag.find("code")
+        if code_tag:
+            language_cls = code_tag.get("class", [])
+            pure_text = code_tag.get_text()  # 榨干所有内嵌的 span/b/i，只留纯代码文本
+            pre_tag.clear()  # 物理清空内部所有杂质
+            
+            # 重新组装标准的、干净的 <code> 标签
+            new_code = soup.new_tag("code")
+            if language_cls:
+                new_code["class"] = language_cls
+            new_code.append(pure_text)
+            pre_tag.append(new_code)
+        else:
+            pure_text = pre_tag.get_text()
+            pre_tag.clear()
+            new_code = soup.new_tag("code")
+            new_code.append(pure_text)
+            pre_tag.append(new_code)
+
+    # 处理独立的内联代码（不在 pre 内部的 code），同样做去标签提纯
+    for code_tag in soup.find_all("code"):
+        if not code_tag.find_parent("pre"):
+            pure_text = code_tag.get_text()
+            code_tag.clear()
+            code_tag.append(pure_text)
+
+    # 以下为原有的基础排版解包逻辑，完美保留
     for tag in soup.find_all(["p", "div", "tr", "h1", "h2", "h3", "h4", "h5", "h6"]):
         if tag.next_sibling:
             tag.insert_after("\n")
@@ -81,7 +104,7 @@ def process_and_unwrap_tags(soup: BeautifulSoup):
     for tag in soup.find_all(["ul", "ol", "table", "tbody"]):
         tag.unwrap()
 
-    # 安全拔除不在白名单的标签
+    # 安全拔除不在白名单的其余脏标签
     all_tags = soup.find_all()
     for tag in all_tags:
         if tag.name not in ALLOWED_TAGS:
@@ -95,7 +118,6 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
     # 1. 优先对纯文本节点做转义，规避 TG 400 错误
     for text_node in soup.find_all(text=True):
         if isinstance(text_node, NavigableString):
-            # 如果父级已经是转义后的文本，不再重复转义
             if not text_node.string.startswith("&lt;") and not text_node.string.endswith("&gt;"):
                 escaped_text = escape(text_node.string)
                 text_node.replace_with(escaped_text)
@@ -108,25 +130,21 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
         attrs = dict(tag.attrs)
         tag.attrs.clear()
 
-        # ====== 核心升级：仅对 a 标签逻辑进行重组和增强 ======
+        # ====== 仅对指定标签放行特定属性 ======
         if tag.name == "a":
             href = attrs.get("href", "").strip()
-            
             if href:
-                # 独家高爽直连：如果是纯用户名/Bot名（包含@，或者包含_bot，或者没有域名点号的纯字符）
                 if not href.startswith(("http://", "https://", "tg://")):
                     if href.startswith("@") or "_bot" in href.lower() or (len(href) >= 3 and "." not in href):
                         pure_username = href.lstrip("@")
                         href = f"https://t.me/{pure_username}"
             
-            # 智能补全传统的普通 URL 前缀
             if href and not href.startswith(("http://", "https://", "tg://")):
                 href = "https://" + href
                 
             if href.startswith(("http://", "https://", "tg://")):
                 tag["href"] = href
 
-        # ====== 以下原有功能完美保留，不要弄丢了 ======
         elif tag.name == "blockquote":
             if "collapsible" in attrs or "collapsible" in attrs.get("class", []):
                 tag["collapsible"] = ""
@@ -140,10 +158,17 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
                 if match:
                     tag["class"] = match.group(1)
 
+        elif tag.name == "tg-emoji":
+            # 🚀【修复换行 Bug】提取前端传过来的表情 ID
+            emoji_id = attrs.get("emoji-id", "").strip()
+            if emoji_id:
+                tag["emoji-id"] = emoji_id      
+
 
 def remove_empty_tags(soup: BeautifulSoup):
     for tag in reversed(soup.find_all()):
-        if tag.name == "tg-spoiler":
+        # 🚀【安全升级】将 pre 和 code 也纳入保护豁免名单，防止空行或空格导致整个代码块被误杀
+        if tag.name in ["tg-spoiler", "pre", "code"]:
             continue
         if tag.name == "a" and not tag.get("href"):
             tag.decompose()
@@ -155,18 +180,13 @@ def remove_empty_tags(soup: BeautifulSoup):
 def sanitize_for_telegram(html: str) -> str:
     if not html:
         return ""
-    # 规范化剧透
     html = normalize_spoilers(html)
     soup = BeautifulSoup(html, "html.parser")
-    # 解包多余标签
     process_and_unwrap_tags(soup)
-    # 属性洗白与文本转义
     clean_attributes_and_escape(soup)
-    # 清理空标签
     remove_empty_tags(soup)
 
     result = soup.decode(formatter=None)
-    # 修正二次转义
     result = result.replace("&amp;lt;", "&lt;").replace("&amp;gt;", "&gt;").replace("&amp;amp;", "&amp;")
     return result.strip()
 
@@ -184,7 +204,6 @@ def truncate_caption(html: str, limit: int = 1024) -> str:
 def smart_clean_inline_keyboard(buttons_list: list, card_id: str) -> list:
     """
     智能清洗和重构内联键盘按钮
-    适配前端传参：name (按钮文本), type (按钮类型), value (按钮内容/链接)
     """
     if not buttons_list or not isinstance(buttons_list, list):
         return []
@@ -200,53 +219,37 @@ def smart_clean_inline_keyboard(buttons_list: list, card_id: str) -> list:
             if not isinstance(btn, dict):
                 continue
 
-           # 1. 修正文本错位：完美兼顾前端直发与后端存储字段 (name / text)
             btn_text = btn.get("name") or btn.get("text") or "点击查看"
             b_type = btn.get("type") or "url"
-            
-            # 2. 🟢【全兼容大终结】内容错位终极解法：
-            # 不管是前端 payload 里的 'value'，还是老数据残留的 'url'、'callback_data'，全部一网打尽！
             val = btn.get("value") or btn.get("url") or btn.get("callback_data") or ""
             val = str(val).strip()
 
             tg_btn = {"text": btn_text}
 
-            # 3. 智能处理 URL 类型（包含你的独家高爽直连黑科技）
             if b_type == "url":
                 if val:
-                    # 如果用户不小心带了 t.me/ 或 https://t.me/，先统一提取出纯正的用户名
-                    # 比如清洗: "https://t.me/kongjing_service_bot" 或 "t.me/kongjing_service_bot"
                     temp_val = val.replace("https://", "").replace("http://", "").replace("t.me/", "").lstrip("@")
-                    
-                    # 判断是不是一个纯用户名/Bot名（不包含任何斜杠路径、点号等网址特征）
                     if "/" not in temp_val and "." not in temp_val:
                         tg_btn["url"] = f"https://t.me/{temp_val}"
                     else:
-                        # 普通外部网址补全
                         if not val.startswith(("http://", "https://", "tg://")):
                             val = "https://" + val
                         tg_btn["url"] = val
                 else:
                     tg_btn["url"] = "https://t.me"
 
-            # 4. 智能处理 Web App 类型
             elif b_type == "web_app":
                 if val and not val.startswith(("http://", "https://")):
                     val = "https://" + val
                 tg_btn["web_app"] = {"url": val if val else "https://t.me"}
 
-            # 5. 智能自动修复 Callback 类型
             elif b_type == "callback":
                 tg_btn["callback_data"] = val if val else f"click_card_{card_id}"
 
-            # 6. 智能处理 Switch 转发类型
             elif b_type == "switch":
                 tg_btn["switch_inline_query"] = val
 
-            # 7. 完美对齐的 share 裂变机制
             elif b_type == "share":
-                # 智能翻译为 Telegram 官方的 switch_inline_query 核心参数
-                # 如果用户没填附加值，默认附带当前卡片 ID
                 share_text = val if val else f"card_{card_id}"
                 tg_btn["switch_inline_query"] = share_text
 
