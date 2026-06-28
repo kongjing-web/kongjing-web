@@ -2534,11 +2534,6 @@ function PreviewScreen({ card, onBack }) {
   
   if (!card) return null;
 
-  useEffect(() => {
-    if (card && card.id) {
-      trackView(card.id);
-    }
-  }, [card?.id]);
 
   // 1:1 复制编辑器的按钮类型探测逻辑，确保徽章图标完全一致
   const detectButtonType = (btn = {}) => {
