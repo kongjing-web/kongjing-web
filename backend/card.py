@@ -1340,6 +1340,37 @@ def _send_telegram_media(chat_id: str, bot_token: str, media_type: str, media_so
         raise HTTPException(status_code=400, detail=f"Telegram发送失败: {response.text}")
     return response.json()
 
+def calculate_prices():
+    """
+    统一的定价计算逻辑，支持多套餐返回
+    """
+    # 你可以在这里调整价格，或者从数据库/配置文件中读取
+    return {
+        "packages": [
+            {
+                "package_id": "week", 
+                "name": "VIP Weekly", 
+                "price_usd": 2.0, 
+                "price_stars": 143, 
+                "duration_days": 7
+            },
+            {
+                "package_id": "month", 
+                "name": "VIP Monthly", 
+                "price_usd": 7.0, 
+                "price_stars": 500, 
+                "duration_days": 30
+            },
+            {
+                "package_id": "quarter", 
+                "name": "VIP Quarterly", 
+                "price_usd": 18.0, 
+                "price_stars": 1200, 
+                "duration_days": 90
+            }
+        ]
+    }
+
 @app.get("/payment/prices")
 def get_current_prices():
     """

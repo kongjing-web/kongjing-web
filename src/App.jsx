@@ -2525,47 +2525,128 @@ return (
 } // 闭合整个 EditorScreen 组件函数
 
 
+
 /* ==========================================================================
-   3. 全屏卡片预览页面组件 (PreviewScreen)
+   3. 全屏卡片预览页面组件 (PreviewScreen) - 1:1 像素级高度还原版
    ========================================================================== */
 function PreviewScreen({ card, onBack }) {
   const { t } = useTranslation();
+  
   if (!card) return null;
+
   useEffect(() => {
     if (card && card.id) {
       trackView(card.id);
     }
-  }, [card && card.id]);
+  }, [card?.id]);
+
+  // 1:1 复制编辑器的按钮类型探测逻辑，确保徽章图标完全一致
+  const detectButtonType = (btn = {}) => {
+    if (btn?.web_app) return 'web_app';
+    if (btn?.callback_data !== undefined) return 'callback';
+    if (btn?.switch_inline_query !== undefined) return 'switch';
+    if (btn?.pay === true) return 'pay';
+    return 'url';
+  };
+
+  // 稳健解析：确保按钮数据在任何情况下都能正确还原为二维矩阵
+  const normalizeButtons = (rawButtons) => {
+    if (!rawButtons) return [];
+    let raw = rawButtons;
+    if (typeof raw === 'string') {
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        return [];
+      }
+    }
+    // 如果已经是标准的二维数组，直接返回
+    if (Array.isArray(raw) && raw.length > 0 && raw.every((item) => Array.isArray(item))) {
+      return raw;
+    }
+    // 如果是老版本一维数组，自动包裹成单行二维数组以防报错
+    return Array.isArray(raw) ? [raw] : [];
+  };
+
+  const layoutButtons = normalizeButtons(card.buttons);
+  const mediaType = card.media_type || 'photo';
+
   return (
     <div className="flex flex-col h-screen bg-[#E7EBF0] max-w-md mx-auto overflow-hidden relative border-x border-gray-200">
+      
+      {/* 顶部导航栏 */}
       <div className="flex items-center justify-between p-4 bg-white border-b shrink-0 z-30 shadow-sm">
         <span className="text-xl cursor-pointer text-gray-400 font-bold px-2" onClick={onBack}>{"<"}</span>
-        <h1 className="text-md font-medium text-gray-700">卡片效果预览</h1>
+        <h1 className="text-sm font-bold text-gray-700">卡片效果预览</h1>
         <div className="w-10"></div>
       </div>
 
+      {/* 主体可滚动区域 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         <div className="text-center text-xs text-gray-400 my-2">今天</div>
         
-        <div className="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+        {/* 核心改动：完全镜像 EditorScreen 内部的卡片预览总容器结构与类名 */}
+        <div className="w-full max-w-[330px] mx-auto bg-white rounded-[15px] overflow-hidden shadow-sm border border-gray-100 flex flex-col">
+          
+          {/* 1. 媒体文件展示区 - 完美同步编辑器的视频/图片/GIF分流逻辑 */}
           {card.img && (
-            <div className="w-full bg-black flex items-center justify-center">
-              <img src={card.img} className="w-full max-h-[260px] object-contain" alt="" />
+            <div className="w-full max-h-[380px] min-h-[160px] min-w-[150px] bg-[#f4f4f7] relative flex items-center justify-center overflow-hidden">
+              {mediaType === 'video' ? (
+                <video src={card.img} controls className="w-full h-full object-contain object-center" />
+              ) : (
+                < img src={card.img} className="w-full h-full object-contain object-center" alt="" />
+              )}
             </div>
           )}
-          <div className="p-3 text-[15px] leading-[1.4] text-black break-words font-sans space-y-2 select-none">
-            <div dangerouslySetInnerHTML={{ __html: card.content }} />
+
+          {/* 2. 富文本内容展示区 - 注入 ProseMirror 类名激活全量动态样式 */}
+          <div className="p-3 bg-white min-h-[60px] text-[15px] leading-[1.4] text-[#000000] break-words font-sans">
+            <div 
+              className="ProseMirror focus:outline-none" 
+              dangerouslySetInnerHTML={{ __html: card.content }} 
+            />
           </div>
-          {card.buttons && card.buttons.length > 0 && (
-            <div className="p-2 border-t border-gray-50 bg-white grid gap-1.5" style={{ gridTemplateColumns: `repeat(${card.buttons.length > 1 ? 2 : 1}, 1fr)` }}>
-              {card.buttons.map(btn => (
-                <a key={btn.id} href={btn.url || "#placeholder"} target="_blank" rel="noopener noreferrer" onClick={() => trackClick(card.id)} className="py-2 px-1 bg-[#F1F5F9] rounded-md text-center text-[13px] text-[#24A1DE] font-normal truncate block shadow-sm hover:bg-slate-100">
-                  {btn.text}
-                </a>
+
+          {/* 3. 动态内联按钮矩阵展示区 - 完美复刻二维 Grid 布局，仅保留展示与埋点，不触发具体业务 */}
+          {layoutButtons.length > 0 && (
+            <div className="p-2 border-t border-gray-100 bg-white space-y-[1.5px]">
+              {layoutButtons.map((row, rowIndex) => (
+                <div 
+                  key={`preview-row-${rowIndex}`} 
+                  className="grid gap-[1.5px]" 
+                  style={{ gridTemplateColumns: `repeat(${Math.max(1, row.length)}, 1fr)` }}
+                >
+                  {row.map((btn, colIndex) => {
+                    const btnType = detectButtonType(btn);
+                    const typeMeta = {
+                      url: { icon: '🔗', label: t('editor_type_url') },
+                      web_app: { icon: '📱', label: t('editor_type_webapp') },
+                      callback: { icon: '⚡', label: t('editor_type_callback') },
+                      switch: { icon: '📣', label: t('editor_type_switch') },
+                      pay: { icon: '💳', label: t('editor_type_pay') },
+                    }[btnType] || { icon: '🔗', label: t('editor_type_url') };
+
+                    return (
+                      <button
+                        key={`preview-btn-${rowIndex}-${colIndex}`}
+                        type="button"
+                        onClick={() => {
+                          // 预览模式：按钮只渲染、不弹窗破坏体验，但保留静默点击上报数据
+                          if (card.id) trackClick(card.id);
+                        }}
+                        className="py-2 px-1 rounded-md text-center text-[12px] font-semibold bg-[#f1f5f9]/70 border border-transparent text-gray-700 hover:bg-slate-100 transition-all cursor-pointer"
+                      >
+                        <span className="block truncate max-w-full">{btn.text || t('editor_unnamed_btn')}</span>
+                        <span className="text-[9px] opacity-40 font-normal block scale-90">{typeMeta.icon} {typeMeta.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               ))}
             </div>
           )}
-        </div>
+
+        </div> {/* 卡片总容器闭合 */}
       </div>
     </div>
   );
