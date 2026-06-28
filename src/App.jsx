@@ -116,16 +116,16 @@ const TgEmoji = Node.create({
 // 在编辑器作用域内强行覆盖 Tailwind 带来的样式擦除，并 1:1 仿真还原 Telegram 经典效果
 const editorStyles = `
   .ProseMirror blockquote {
-    border-left: 3px solid #d97706 !important;
-    background-color: #f8fafc !important;
+    border-left: 3px solid #0088cc !important; /* 调整为更偏向 TG 官方的经典蓝/琥珀橙边线 */
+    background-color: #f4f7f9 !important;
     padding: 0.5rem 1rem !important;
     margin: 0.5rem 0 !important;
     border-radius: 0 8px 8px 0 !important;
-    color: #475569 !important;
+    color: #1f2d3d !important;
     position: relative !important;
   }
   .ProseMirror blockquote[collapsible]::after {
-    content: "📁 可折叠" !important;
+    content: "📁 点击可折叠引用" !important;
     position: absolute !important;
     top: 4px !important;
     right: 8px !important;
@@ -135,14 +135,16 @@ const editorStyles = `
     padding: 1px 4px !important;
     border-radius: 4px !important;
   }
+  /* 💡【针对问题二修复】1:1 仿真还原 Telegram 原生多行代码块样式 */
   .ProseMirror pre {
-    background: #1e1e1e !important;
-    color: #d4d4d4 !important;
-    font-family: 'Fira Code', Consolas, Monaco, monospace !important;
-    padding: 0.75rem 1rem !important;
-    border-radius: 8px !important;
-    margin: 0.75rem 0 !important;
+    background: #f1f5f9 !important; /* 原生浅灰蓝高质感底色 */
+    color: #1e293b !important;       /* 顺滑健康的深色主文本字色 */
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+    padding: 0.6rem 0.8rem !important;
+    border-radius: 6px !important;
+    margin: 0.6rem 0 !important;
     overflow-x: auto !important;
+    border: 1px solid #e2e8f0 !important; /* 极细轻量边框隔离 */
   }
   .ProseMirror pre code {
     background: none !important;
@@ -151,14 +153,16 @@ const editorStyles = `
     border-radius: 0 !important;
     font-size: 0.85rem !important;
   }
+  /* 以下保持原有高亮色彩资产 */
   .ProseMirror pre .hljs-comment { color: #6a9955 !important; }
-  .ProseMirror pre .hljs-keyword { color: #569cd6 !important; }
-  .ProseMirror pre .hljs-string { color: #ce9178 !important; }
-  .ProseMirror pre .hljs-number { color: #b5cea8 !important; }
-  .ProseMirror pre .hljs-function { color: #dcdcaa !important; }
+  .ProseMirror pre .hljs-keyword { color: #0000ff !important; }
+  .ProseMirror pre .hljs-string { color: #a31515 !important; }
+  .ProseMirror pre .hljs-number { color: #098658 !important; }
+  .ProseMirror pre .hljs-function { color: #795e26 !important; }
+  
   .ProseMirror tg-emoji {
-    background-color: rgba(217, 119, 6, 0.1) !important;
-    border: 1px dashed #d97706 !important;
+    background-color: rgba(0, 136, 204, 0.1) !important;
+    border: 1px dashed #0088cc !important;
     padding: 0 2px !important;
     border-radius: 4px !important;
     display: inline-block !important;

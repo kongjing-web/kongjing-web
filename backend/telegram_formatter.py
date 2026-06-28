@@ -57,6 +57,15 @@ def process_and_unwrap_tags(soup: BeautifulSoup):
     """
     处理不兼容标签，保留换行排版
     """
+    # 💡【针对问题三修复】前置高精度拦截：显式为 blockquote 和 pre 块级元素后面加上换行符保护
+    # 彻底杜绝可折叠引用、多行代码块与后续常规正文紧密粘连、甚至排版错乱坍塌的死穴！
+    for block_tag in soup.find_all(["blockquote", "pre"]):
+        if block_tag.next_sibling:
+            next_sib = block_tag.next_sibling
+            # 如果后面已经是换行字符，则不重复添加，防止空行过多
+            if not (isinstance(next_sib, NavigableString) and next_sib.startswith("\n")):
+                block_tag.insert_after("\n")
+
     # 🚀 【核心升级】代码块强力扁平化引擎：彻底杜绝多行代码块消失的死穴！
     # Telegram 严禁 pre/code 内部嵌套任何其他 HTML 标签。这里必须提纯为纯文本。
     for pre_tag in soup.find_all("pre"):
@@ -86,10 +95,12 @@ def process_and_unwrap_tags(soup: BeautifulSoup):
             code_tag.clear()
             code_tag.append(pure_text)
 
-    # 以下为原有的基础排版解包逻辑，完美保留
+    # 以下为基础排版解包逻辑，完美保留并加入防御性换行校验
     for tag in soup.find_all(["p", "div", "tr", "h1", "h2", "h3", "h4", "h5", "h6"]):
         if tag.next_sibling:
-            tag.insert_after("\n")
+            next_sib = tag.next_sibling
+            if not (isinstance(next_sib, NavigableString) and next_sib.startswith("\n")):
+                tag.insert_after("\n")
         tag.unwrap()
 
     for tag in soup.find_all(["br", "hr"]):
@@ -116,13 +127,16 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
     严格洗白属性，同时保障文本安全转义
     """
     # 1. 优先对纯文本节点做转义，规避 TG 400 错误
+    # 💡【针对问题一和问题四修复】黄金修正：绝不能使用 replace_with() ！！！
+    # 通过直接给 text_node.string 赋值，实现原地修改，这样完全不会破坏 DOM 树迭代指针，
+    # 从而彻底解决“一键复制标签被乱杀消失”、“表情在发布时无故多出一个”、“表情漂移到引用内部”的诡异 Bug！
     for text_node in soup.find_all(text=True):
         if isinstance(text_node, NavigableString):
             if not text_node.string.startswith("&lt;") and not text_node.string.endswith("&gt;"):
-                escaped_text = escape(text_node.string)
-                text_node.replace_with(escaped_text)
+                # 原地直接安全的进行转义文本赋值覆盖！
+                text_node.string = escape(text_node.string)
 
-    # 2. 精准过滤属性
+    # 2. 精准过滤属性（以下原有资产完好保留）
     for tag in soup.find_all():
         if not isinstance(tag, Tag):
             continue
@@ -159,10 +173,10 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
                     tag["class"] = match.group(1)
 
         elif tag.name == "tg-emoji":
-            # 🚀【修复换行 Bug】提取前端传过来的表情 ID
+            # 提取前端传过来的表情 ID
             emoji_id = attrs.get("emoji-id", "").strip()
             if emoji_id:
-                tag["emoji-id"] = emoji_id      
+                tag["emoji-id"] = emoji_id
 
 
 def remove_empty_tags(soup: BeautifulSoup):
