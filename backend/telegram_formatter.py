@@ -127,16 +127,19 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
     严格洗白属性，同时保障文本安全转义
     """
     # 1. 优先对纯文本节点做转义，规避 TG 400 错误
-    # 💡【针对问题一和问题四修复】黄金修正：绝不能使用 replace_with() ！！！
-    # 通过直接给 text_node.string 赋值，实现原地修改，这样完全不会破坏 DOM 树迭代指针，
-    # 从而彻底解决“一键复制标签被乱杀消失”、“表情在发布时无故多出一个”、“表情漂移到引用内部”的诡异 Bug！
+    # 💡【终极修复】必须先用列表收集，再统一执行 replace_with！
+    # 绝不能在动态遍历 DOM 树的同时销毁节点，这会彻底打断底层指针，导致 <code> 等标签被跳过或剥离。
+    text_nodes = []
     for text_node in soup.find_all(text=True):
         if isinstance(text_node, NavigableString):
             if not text_node.string.startswith("&lt;") and not text_node.string.endswith("&gt;"):
-                # 原地直接安全的进行转义文本赋值覆盖！
-                text_node.string = escape(text_node.string)
+                text_nodes.append(text_node)
+                
+    # 统一安全替换
+    for node in text_nodes:
+        node.replace_with(escape(node.string))
 
-    # 2. 精准过滤属性（以下原有资产完好保留）
+    # 2. 精准过滤属性 (下方代码逻辑不变，完美放行 code)
     for tag in soup.find_all():
         if not isinstance(tag, Tag):
             continue
@@ -160,11 +163,12 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
                 tag["href"] = href
 
         elif tag.name == "blockquote":
-            if "collapsible" in attrs or "collapsible" in attrs.get("class", []):
-                tag["collapsible"] = ""
+            if "expandable" in attrs or "collapsible" in attrs or "collapsible" in attrs.get("class", []):
+                tag["expandable"] = ""
 
         elif tag.name == "code":
-            # 保留代码高亮类
+            # 💡 这里仅对“多行代码”保留 language- 高亮属性
+            # 如果是“一键复制”的内联代码，它在这里会被洗白成干干净净的 <code>，TG 完美识别
             cls = attrs.get("class", [])
             cls_str = " ".join(cls) if isinstance(cls, list) else str(cls)
             if "language-" in cls_str:
@@ -173,7 +177,6 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
                     tag["class"] = match.group(1)
 
         elif tag.name == "tg-emoji":
-            # 提取前端传过来的表情 ID
             emoji_id = attrs.get("emoji-id", "").strip()
             if emoji_id:
                 tag["emoji-id"] = emoji_id

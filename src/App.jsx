@@ -72,10 +72,10 @@ const TelegramBlockquote = Blockquote.extend({
     return {
       collapsible: {
         default: false,
-        parseHTML: element => element.hasAttribute('collapsible'),
+        parseHTML: element => element.hasAttribute('collapsible') || element.hasAttribute('expandable'),
         renderHTML: attributes => {
           if (!attributes.collapsible) return {};
-          return { collapsible: '' };
+          return { expandable: '' };
         },
       },
     };
