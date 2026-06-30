@@ -29,6 +29,7 @@ import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from telegram_formatter import sanitize_for_telegram, truncate_caption, smart_clean_inline_keyboard
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 
 load_dotenv() 
@@ -258,6 +259,7 @@ def init_db():
             "tg_file_id": "TEXT",
             "tg_message_id": "TEXT",
             "img": "TEXT",
+            "bot_username": "TEXT DEFAULT ''", 
             "created_at": "INTEGER DEFAULT 0",  
             "updated_at": "INTEGER DEFAULT 0",  
         }.items():
@@ -388,7 +390,6 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
 
     try:
         with get_db_connection() as (_, cursor):
-            # 🔍 【升级】：顺手把预热好的 tg_file_id 从卡片表里捞出来
             cursor.execute(
                 "SELECT title, content, img, buttons, media_type, user_id, tg_file_id FROM cards WHERE card_id = %s",
                 (card_id,)
@@ -429,6 +430,24 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
     limit = 1024 if has_media else 4096
     caption = truncate_caption(clean_html, limit=limit) 
 
+    # =========================================================================
+    # 🚨 【核心修复层 A】：规避 Telegram 极度严格的布尔属性审查
+    # BeautifulSoup 序列化时会把布尔属性写成 expandable=""，这会导致 TG 拒绝解析并引发语法崩溃
+    # 我们在此将其强行还原为 Telegram 官方指定的标准格式
+    # =========================================================================
+    if caption:
+        caption = caption.replace('expandable=""', 'expandable').replace("expandable=''", "expandable")
+
+    # =========================================================================
+    # 🚨 【核心修复层 B】：一键扒光 HTML 标签，提炼纯净的下拉弹窗专用预览摘要
+    # 确保在用户输入 @bot 弹出的下拉菜单里，绝对不泄露任何 <blockquote> 源码
+    # =========================================================================
+    soup_preview = BeautifulSoup(clean_html, "html.parser")
+    pure_preview_text = soup_preview.get_text().strip()
+    short_description = pure_preview_text[:60] + "..." if len(pure_preview_text) > 60 else pure_preview_text
+    if not short_description:
+        short_description = "点击直接发布此卡片内容"
+
     result_id = f"card_{card_id}_{int(time.time())}" 
     tg_file_id_str = str(tg_file_id or "").strip()
 
@@ -442,8 +461,9 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                 inline_result = {
                     "type": "video",
                     "id": result_id,
-                    "video_file_id": tg_file_id_str, # 🎬 核心字段
+                    "video_file_id": tg_file_id_str, 
                     "title": title or "精美可视化视频卡片",
+                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
                     "caption": caption,
                     "parse_mode": "HTML"
                 }
@@ -451,8 +471,9 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                 inline_result = {
                     "type": "gif",
                     "id": result_id,
-                    "gif_file_id": tg_file_id_str,   # 动图核心字段
+                    "gif_file_id": tg_file_id_str,   
                     "title": title or "精美动态卡片",
+                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
                     "caption": caption,
                     "parse_mode": "HTML"
                 }
@@ -460,8 +481,9 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                 inline_result = {
                     "type": "photo",
                     "id": result_id,
-                    "photo_file_id": tg_file_id_str, # 📸 图片核心字段
+                    "photo_file_id": tg_file_id_str, 
                     "title": title or "精美可视化卡片",
+                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
                     "caption": caption,
                     "parse_mode": "HTML"
                 }
@@ -472,18 +494,19 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                 "type": "photo",
                 "id": result_id,
                 "title": title or "精美可视化卡片",
+                "description": short_description,      # 🌟 修复：降级模式下也必须注入纯文本预览
                 "photo_url": img,
                 "thumb_url": img,
                 "caption": caption,
                 "parse_mode": "HTML"
             } 
     else:
-        # 文本卡片保持原本的 article 逻辑不变
+        # 文本卡片保持原本的 article 逻辑
         inline_result = {
             "type": "article",
             "id": result_id,
             "title": title or "精美可视化卡片",
-            "description": caption[:80] if caption else "点击发布卡片",
+            "description": short_description,          # 🌟 统一使用提取好的无标签干净摘要
             "input_message_content": {
                 "message_text": caption,
                 "parse_mode": "HTML"
@@ -500,7 +523,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
         "is_personal": True
     } 
 
-    # 5. 🚀 【硬核自愈发信层】（保持不变）
+    # 5. 🚀 【硬核自愈发信层】
     try:
         res = requests.post(
             f"https://api.telegram.org/bot{current_use_token}/answerInlineQuery",
@@ -509,7 +532,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
         )
         
         if not res.ok and ("parse" in res.text.lower() or "entity" in res.text.lower() or "entities" in res.text.lower()):
-            print(f"[⚠️ HTML格式自愈] 检测到排版引发 HTML 语法崩溃，正在启动免解析无痕降级重试...")
+            print(f"[⚠️ HTML格式自愈触发] 依旧有未闭合或非法标签，正在启动免解析无痕降级重试...")
             if "parse_mode" in inline_result:
                 inline_result["parse_mode"] = None
             if "input_message_content" in inline_result and "parse_mode" in inline_result["input_message_content"]:
@@ -1683,6 +1706,7 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
             cursor.execute("SELECT bot_token FROM users WHERE telegram_id = %s", (incoming_user_id,))
             u_bot = cursor.fetchone()
             active_bot_token = str(u_bot[0]).strip() if (u_bot and u_bot[0]) else BOT_TOKEN
+            active_bot_username = str(u_bot[1]).strip() if (u_bot and u_bot[1]) else GLOBAL_BOT_USERNAME
 
             if card_id:
                 cursor.execute("SELECT status, img, media_type, user_id, tg_message_id, tg_file_id FROM cards WHERE card_id = %s", (card_id,))
@@ -1796,7 +1820,7 @@ def get_cards(current_user: dict = Depends(get_current_tg_user)):
         # ⏱️ 【核心升级】：在 SQL 最后强行加上 ORDER BY updated_at DESC
         # 这样当你保存、或者预热完新卡片时，它在小程序列表里会雷打不动地出现在最上面！
         query = """
-            SELECT card_id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type, updated_at  
+            SELECT card_id, title, status, img, content, buttons, views, shares, likes, clicks, user_id, media_type, updated_at, bot_username  
             FROM cards 
             WHERE user_id = %s
             ORDER BY updated_at DESC
@@ -1823,6 +1847,7 @@ def get_cards(current_user: dict = Depends(get_current_tg_user)):
             "user_id": row[10],
             "media_type": row[11] or 'photo',
             "updated_at": row[12],
+            "bot_username": row[13] or '@default_bot',
             "analytics": {
                 "views": row[6],
                 "shares": row[7],

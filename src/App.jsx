@@ -1030,7 +1030,34 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       alert('请在 Telegram 真实环境中打开');
       return;
     }
+
+    // 1. 🔑 【动态处理 Bot 名】提取后端随卡片列表返回的专属于该卡片的机器人名
+    let botUsername = card.bot_username || ''; 
+    
+    // 自动帮用户清洗数据：如果后端传来的 bot 名没带 @ 符号，代码自动帮他补上
+    if (botUsername && !botUsername.startsWith('@')) {
+      botUsername = '@' + botUsername;
+    }
+
+    const inlineQueryText = `card_${card.id}`;
+    // 帮用户拼装出完美的备用粘贴指令。例如: "@my_bot card_abc123"
+    // 如果万一没捞到 bot 名，则降级只复制卡片编号
+    const textToCopy = botUsername ? `${botUsername} ${inlineQueryText}` : inlineQueryText;
+
+    // 2. 🔥 【核心改进：防 iOS 拦截】必须在 fetch 之前执行剪切板写入！
+    // 只要用户一点击，零延迟立刻写入，苹果的“安全保镖机制”就会 100% 判定为用户主动行为而放行
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(textToCopy);
+        console.log("【空境】备用内联指令已静默写入剪切板:", textToCopy);
+      } catch (copyErr) {
+        // 捕获异常仅记录日志，绝不阻断后续网络请求和原生弹窗主流程
+        console.error("剪切板写入失败:", copyErr);
+      }
+    }
+
     try {
+      // 3. 🌐 正常发起网络请求，通知后端激活该卡片的内联发布状态
       const initData = window.Telegram.WebApp.initData;
       const response = await fetch('https://www.kongjing.online/api/publish', {
         method: 'POST',
@@ -1047,7 +1074,8 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
         return;
       }
 
-      const inlineQueryText = `card_${card.id}`;
+      // 4. 🚀 激活成功，唤起 TG 原生多功能聊天选择器
+      // 注意：TG 原生方法底层自带当前 Bot 上下文，所以参数依然只需要传 inlineQueryText (即 card_xxxx) 即可
       window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
     } catch (error) {
       console.error("内联模式发布失败:", error);
