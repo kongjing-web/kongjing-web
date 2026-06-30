@@ -1028,7 +1028,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     setShowUserMenu(false); // 关闭下拉菜单
 
     // 💡 替换提示：把下面的 'Your_Support_Bot' 换成你实际申请的客服机器人 Username（不需要带 @）
-    const SUPPORT_BOT_USERNAME = 'Your_Support_Bot'; 
+    const SUPPORT_BOT_USERNAME = 'kongjing_01_bot'; 
     const targetLink = `https://t.me/${SUPPORT_BOT_USERNAME.replace('@', '')}`;
 
     if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
