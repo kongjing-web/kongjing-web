@@ -80,6 +80,18 @@ const TelegramBlockquote = Blockquote.extend({
       },
     };
   },
+
+  // 💡 【核心修复】：显式重写 Tiptap 命令，迫使其强行支持接收并传递属性参数！
+  addCommands() {
+    return {
+      setBlockquote: attributes => ({ commands }) => {
+        return commands.wrapIn(this.name, attributes);
+      },
+      toggleBlockquote: attributes => ({ commands }) => {
+        return commands.toggleWrap(this.name, attributes);
+      },
+    };
+  },
 });
 
 // 新增 TgEmoji 节点插件以支持 Telegram 自定义表情标签传输
