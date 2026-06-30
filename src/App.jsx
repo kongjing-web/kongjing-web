@@ -1265,21 +1265,25 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                     )}
 
                     <div className="flex flex-1 gap-4 items-center overflow-hidden">
-                      {/* 🎬 视频/图片缩略图完美兼容区 */}
-                      {card.media_type === 'video' ? (
-                        <div className="w-20 h-20 rounded-xl shrink-0 bg-zinc-950 relative overflow-hidden border border-gray-100">
-                          <video src={`${card.img}#t=0.001`} className="w-full h-full object-cover opacity-80" preload="metadata" muted playsInline />
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                            <svg className="w-4 h-4 text-white/90 fill-current" viewBox="0 0 24 24">
-                              <path d="M8 5v14l11-7z"/>
-                            </svg>
-                          </div>
+                      {/* 🎬 视频/图片缩略图完美兼容区（修复纯文本强行补图问题） */}
+                      {card.img && card.img.trim() !== "" ? (
+                        // 只有当确确实实有图片/视频地址时，才渲染左侧的媒体区块
+                        <div className="w-20 h-20 rounded-xl shrink-0 overflow-hidden border border-gray-100 bg-slate-100">
+                          {card.media_type === 'video' ? (
+                            <div className="w-full h-full bg-zinc-950 relative">
+                              <video src={`${card.img}#t=0.001`} className="w-full h-full object-cover opacity-80" preload="metadata" muted playsInline />
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                                <svg className="w-4 h-4 text-white/90 fill-current" viewBox="0 0 24 24">
+                                  <path d="M8 5v14l11-7z"/>
+                                </svg>
+                              </div>
+                            </div>
+                          ) : (
+                            // 无论是 gif 还是 photo，只要有携带 img 地址，就正常渲染图片，且删除了 picsum 随机图兜底
+                            < img src={card.img} className="w-full h-full object-cover" alt="缩略图" />
+                          )}
                         </div>
-                      ) : card.media_type === 'gif' ? (
-                        <img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
-                      ) : (
-                        <img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
-                      )}
+                      ) : null /* 👈 核心：如果没有图，直接返回 null，左侧不占位 */}
 
                       {/* 📝 右侧文字与状态指标区 */}
                       <div className="flex-1 flex flex-col justify-between py-1 h-20 overflow-hidden">
