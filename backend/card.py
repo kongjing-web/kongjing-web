@@ -30,7 +30,9 @@ from psycopg2.pool import ThreadedConnectionPool
 from telegram_formatter import sanitize_for_telegram, truncate_caption, smart_clean_inline_keyboard
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-
+import redis
+from datetime import datetime
+import requests
 
 load_dotenv() 
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心") 
@@ -50,9 +52,49 @@ app.add_middleware(
     allow_headers=["*"],
 ) 
 
+# ==========================================
+# 🔌 Redis & 客服核心常量配置 (直接扔在文件头部或配置区)
+# ==========================================
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+r_cache = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True)
+
+SUPPORT_BOT_TOKEN = "8826811203:AAG-tjP_Djr8Ji7UcdEv8Iui_zmXURWtfWI"
+SUPPORT_GROUP_ID = -1004491807478
+TICKET_TTL = 5 * 24 * 3600  # ⏳ 工单生命周期：5天自动过期
+
 # 🔐 从环境变量中读取系统主（内置）Bot Token
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
-CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN") 
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+
+# 💡 全局母舰机器人用户名缓存（动态自适应感知）
+GLOBAL_BOT_USERNAME_CACHE = None
+
+def get_global_bot_username() -> str:
+    """同步自适应获取母舰机器人的用户名，并进行全局缓存"""
+    global GLOBAL_BOT_USERNAME_CACHE
+    if GLOBAL_BOT_USERNAME_CACHE:
+        return GLOBAL_BOT_USERNAME_CACHE
+
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        print("[严重警告] 环境变量中未检测到 BOT_TOKEN，无法获取母舰用户名！")
+        return ""
+        
+    try:
+        # 因为在同步路由中，直接使用普通的 requests 发起一次同步查询
+        url = f"https://api.telegram.org/bot{token}/getMe"
+        response = requests.get(url, timeout=5)
+        res_json = response.json()
+        if res_json.get("ok"):
+            GLOBAL_BOT_USERNAME_CACHE = str(res_json["result"]["username"]).strip()
+            print(f"[系统初始化] 🚀 成功通过 Token 自适应感知母舰机器人用户名: @{GLOBAL_BOT_USERNAME_CACHE}")
+            return GLOBAL_BOT_USERNAME_CACHE
+    except Exception as e:
+        print(f"[错误] 自动拉取母舰机器人用户名失败: {e}")
+    
+    return ""
 
 # 🛡️ 动态组装数据库配置
 DB_CONFIG = {
@@ -143,6 +185,7 @@ def init_db():
                 likes INTEGER DEFAULT 0,
                 clicks INTEGER DEFAULT 0,
                 img TEXT,
+                bot_username TEXT DEFAULT '',
                 created_at INTEGER DEFAULT 0, 
                 updated_at INTEGER DEFAULT 0  
             )
@@ -259,14 +302,16 @@ def init_db():
             "tg_file_id": "TEXT",
             "tg_message_id": "TEXT",
             "img": "TEXT",
-            "bot_username": "TEXT DEFAULT ''", 
+            "bot_username": "TEXT DEFAULT ''",
             "created_at": "INTEGER DEFAULT 0",  
             "updated_at": "INTEGER DEFAULT 0",  
         }.items():
             if name not in _get_existing_columns(cursor, "cards"):
                 try:
                     cursor.execute(f"ALTER TABLE cards ADD COLUMN {name} {metadata}")
+                    print(f"[热升级成功] 已成功为老 cards 表动态追加字段: {name}")
                 except Exception:
+                    print(f"[热升级失败] 尝试为 cards 表追加字段 {name} 失败: {e}")
                     pass 
 
         # 🔄 C. 订单表 (orders) 动态扩容
@@ -553,10 +598,32 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
         print("[网络通信发信故障]:", e)
 
     
-init_db() 
 
 # 1. 初始化数据库表结构
 init_db() 
+
+# ==========================================
+# ⚓ 客服 Bot Webhook 自动注册 (放在 app 启动事件里调用)
+# ==========================================
+def auto_align_support_bot_webhook(api_base_url: str):
+    if not SUPPORT_BOT_TOKEN:
+        print("⚠️ [客服自检] 未检测到 SUPPORT_BOT_TOKEN，客服网关无法初始化！")
+        return
+    
+    support_webhook_url = f"{api_base_url.rstrip('/')}/tg/support_webhook"
+    print(f"⚓ [客服自检] 正在自动注册客服专线公网网关: {support_webhook_url} ...")
+    try:
+        res = requests.post(
+            f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/setWebhook",
+            json={"url": support_webhook_url, "allowed_updates": ["message"]},
+            timeout=5
+        )
+        if res.ok:
+            print(f"🟢 [客服自愈成功] 客服 Bot Webhook 全自动对齐！")
+        else:
+            print(f"❌ [客服自愈失败] TG 拒绝了网关注册: {res.text}")
+    except Exception as e:
+        print(f"❌ [客服自愈异常] 客服 Bot 注册超时: {e}")
 
 # 2. ⚓ 【主母舰系统自动化中心】服务器启动时，自动把主 Bot 的 Webhook 牢牢锚定，彻底告别浏览器手动访问！
 def auto_align_master_bot_webhook():
@@ -587,6 +654,154 @@ def auto_align_master_bot_webhook():
 
 # 顺轨执行主舰自愈（这里开启一个线程或者直接执行，由于是启动时执行一次，直接执行即可）
 auto_align_master_bot_webhook()
+auto_align_support_bot_webhook(API_BASE_URL)
+
+# ==========================================
+# 🗃️ 辅助函数：抓取数据库用户状态（直接用你原文件里的 get_db_connection）
+# ==========================================
+def _get_user_financial_and_vip_status(user_id: str) -> dict:
+    # 这里直接盲挂你现有的 get_db_connection，因为在一个文件里，随便调用
+    with get_db_connection() as (conn, cursor):
+        cursor.execute(
+            "SELECT username, role, vip_until, balance FROM users WHERE telegram_id = %s",
+            (str(user_id),)
+        )
+        row = cursor.fetchone()
+        if row:
+            username, role, vip_until, balance = row
+            is_vip = vip_until > int(time.time())
+            vip_text = f"👑 VIP 会员 (⏳ 至 {datetime.fromtimestamp(vip_until).strftime('%Y-%m-%d')})" if is_vip else "👤 普通用户"
+            return {
+                "username": f"@{username}" if username else "未设置",
+                "identity": vip_text,
+                "balance": f"{balance:.2f} USDT",
+                "role": role
+            }
+        return {"username": "全新用户", "identity": "👤 普通用户", "balance": "0.00 USDT", "role": "user"}
+
+
+# ==========================================
+# 🏁 核心网关：客服专属双向流量路由
+# ==========================================
+@app.post("/tg/support_webhook")
+async def telegram_support_webhook_router(request: Request, background_tasks: BackgroundTasks):
+    try:
+        update_data = await request.json()
+        message = update_data.get("message")
+        if not message:
+            return {"status": "success"}
+
+        chat_id = message["chat"]["id"]
+        chat_type = message["chat"]["type"]
+
+        # ----------------------------------------------------------------------
+        # 🚀 模式 A：用户发送私聊给客服 Bot -> 同步/创建群组 Topic 话题
+        # ----------------------------------------------------------------------
+        if chat_type == "private":
+            user_id = str(chat_id)
+            text_content = message.get("text", "")
+
+            # 过滤或首句欢迎词响应
+            if text_content.startswith("/start"):
+                welcome_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
+                await run_in_threadpool(requests.post, welcome_url, json={
+                    "chat_id": user_id,
+                    "text": "🌌 *空境系统 · 客服中心*\n\n您好！请直接在此处发送您遇到的问题或合作意向，技术团队将直接通过此窗口与您对话。",
+                    "parse_mode": "Markdown"
+                }, timeout=3)
+                return {"status": "success"}
+
+            # 1. 检索 Redis 缓存层关系
+            topic_id = r_cache.get(f"support_topic:{user_id}")
+
+            # 2. 缓存未命中 -> 开辟【新工单话题】
+            if not topic_id:
+                user_info = _get_user_financial_and_vip_status(user_id)
+                raw_first_name = message["from"].get("first_name", "User")
+                # 🔥【核心修正】：防止昵称包含 < > & 导致 TG 官方 HTML 解析引擎崩溃
+                clean_first_name = sanitize_for_telegram(raw_first_name)
+                
+                # A. 创建论坛话题
+                create_topic_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/createForumTopic"
+                topic_res = await run_in_threadpool(requests.post, create_topic_url, json={
+                    "chat_id": SUPPORT_GROUP_ID,
+                    "name": f"{raw_first_name} | ID: {user_id}"  # 标题不支持 HTML 标签，直接用原名
+                }, timeout=5)
+                
+                if not topic_res.ok:
+                    print(f"❌ [客服创建工单失败]: {topic_res.text}")
+                    return {"status": "error"}
+                
+                topic_id = str(topic_res.json()["result"]["message_thread_id"])
+
+                # B. 双向路由灌入 Redis
+                r_cache.setex(f"support_topic:{user_id}", TICKET_TTL, topic_id)
+                r_cache.setex(f"support_user:{topic_id}", TICKET_TTL, user_id)
+
+                # C. 渲染发送工业黑金极简风的【用户信息置顶卡片】
+                card_html = (
+                    f"<b>🎴 【空境工单系统 · 用户置顶卡片】</b>\n"
+                    f"<code>───────────────────</code>\n"
+                    f"👤 <b>用户昵称:</b> {clean_first_name}\n"  # 👈 使用了清洗后的安全昵称
+                    f"🆔 <b>用户 ID:</b> <code>{user_id}</code>\n"
+                    f"🏷️ <b>平台账号:</b> {user_info['username']}\n"
+                    f"💎 <b>账户身份:</b> {user_info['identity']}\n"
+                    f"💰 <b>账户余额:</b> <code>{user_info['balance']}</code>\n"
+                    f"<code>───────────────────</code>\n"
+                    f"💡 <i>提示：在此话题内直接回复，内容将全自动同步回该用户私聊。</i>"
+                )
+                
+                send_card_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
+                await run_in_threadpool(requests.post, send_card_url, json={
+                    "chat_id": SUPPORT_GROUP_ID,
+                    "message_thread_id": int(topic_id),
+                    "text": card_html,
+                    "parse_mode": "HTML"
+                }, timeout=3)
+
+            # 3. 将用户消息完美 Copy 投递至指定 Topic 话题中
+            copy_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/copyMessage"
+            await run_in_threadpool(requests.post, copy_url, json={
+                "chat_id": SUPPORT_GROUP_ID,
+                "from_chat_id": user_id,
+                "message_id": message["message_id"],
+                "message_thread_id": int(topic_id)
+            }, timeout=3)
+
+            # 4. 活跃对话自适应续期
+            r_cache.expire(f"support_topic:{user_id}", TICKET_TTL)
+            r_cache.expire(f"support_user:{topic_id}", TICKET_TTL)
+
+        # ----------------------------------------------------------------------
+        # 👑 模式 B：客服团队在私密群 Topic 话题中回复 -> 双向透传回用户私聊
+        # ----------------------------------------------------------------------
+        elif chat_id == SUPPORT_GROUP_ID and "message_thread_id" in message:
+            # 🚨 拦截内鬼：如果是机器人自己投递的消息，直接忽略，防止自循环死复读
+            if message.get("from", {}).get("is_bot"):
+                return {"status": "success"}
+
+            topic_id = str(message["message_thread_id"])
+            
+            # 1. 检索该话题对应的真实用户
+            target_user_id = r_cache.get(f"support_user:{topic_id}")
+            if target_user_id:
+                # 2. 将客服的回复精准 Copy 传递回用户私聊中
+                copy_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/copyMessage"
+                await run_in_threadpool(requests.post, copy_url, json={
+                    "chat_id": int(target_user_id),
+                    "from_chat_id": SUPPORT_GROUP_ID,
+                    "message_id": message["message_id"]
+                }, timeout=3)
+
+                # 3. 活跃回复同样触发路由续期
+                r_cache.expire(f"support_topic:{target_user_id}", TICKET_TTL)
+                r_cache.expire(f"support_user:{topic_id}", TICKET_TTL)
+
+        return {"status": "success"}
+
+    except Exception as e:
+        print(f"[客服网关严重异常]: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 # ==========================================
 # 💰 智能计价与后台调控中心（统一集权于内置主Bot）
@@ -1663,7 +1878,7 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
         raise HTTPException(status_code=400, detail="卡片保存失败：未能提取到有效的 Telegram 用户ID")
 
     # ----------------------------------------------------------------------
-    # 🚀 【核心新增】第一道纵深防御：全局文本长度与恶意灌水强力清洗
+    # 🚀 【第一道纵深防御】全局文本长度与恶意灌水强力清洗
     # ----------------------------------------------------------------------
     title_str = str(data.title or "").strip()
     content_str = str(data.content or "").strip()
@@ -1702,11 +1917,20 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
     card_id = str(data.id).strip() if data.id else ""
 
     try:
+        # 🛡️ 【缩进已彻底修复：标准 4 空格对齐】
         with get_db_connection() as (_, cursor):
-            cursor.execute("SELECT bot_token FROM users WHERE telegram_id = %s", (incoming_user_id,))
+            cursor.execute("SELECT bot_token, bot_username FROM users WHERE telegram_id = %s", (incoming_user_id,))
             u_bot = cursor.fetchone()
-            active_bot_token = str(u_bot[0]).strip() if (u_bot and u_bot[0]) else BOT_TOKEN
-            active_bot_username = str(u_bot[1]).strip() if (u_bot and u_bot[1]) else GLOBAL_BOT_USERNAME
+            
+            # 💡 【完美闭环逻辑】：优先检测用户是否绑定了专属 Bot 资产
+            if u_bot and str(u_bot[0]).strip():
+                # 如果用户表里有专属 Token，直接用他自己绑定好的
+                active_bot_token = str(u_bot[0]).strip()
+                active_bot_username = str(u_bot[1]).strip()
+            else:
+                # 如果没有绑定，完美降级回系统母舰，并动态触发自适应感知机制
+                active_bot_token = os.getenv("BOT_TOKEN") or ""
+                active_bot_username = get_global_bot_username() # 🔥 调用自适应探针，防守拉满
 
             if card_id:
                 cursor.execute("SELECT status, img, media_type, user_id, tg_message_id, tg_file_id FROM cards WHERE card_id = %s", (card_id,))
@@ -1727,7 +1951,7 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                             )
                         
                         # ----------------------------------------------------------------------
-                        # 🚀 【核心新增】第二道纵深防御：对活体卡片进行 Telegram 官规硬锁
+                        # 🚀 【第二道纵深防御】对活体卡片进行 Telegram 官规硬锁
                         # ----------------------------------------------------------------------
                         has_media = db_img != ""
                         tg_limit = 1024 if has_media else 4096
@@ -1741,13 +1965,14 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
 
                         final_tg_file_id = old_tg_file_id
                         
+                        # 更新已发布的卡片，同步刷新其最新的 bot_username
                         cursor.execute(
                             """
                             UPDATE cards
-                            SET title = %s, content = %s, buttons = %s, updated_at = %s
+                            SET title = %s, content = %s, buttons = %s, bot_username = %s, updated_at = %s
                             WHERE card_id = %s
                             """,
-                            (data.title, data.content, db_buttons_str, current_timestamp, card_id),
+                            (data.title, data.content, db_buttons_str, active_bot_username, current_timestamp, card_id),
                         )
                         
                         if tg_message_id:
@@ -1778,32 +2003,36 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                         else:
                             final_tg_file_id = old_tg_file_id
 
+                        # 更新草稿状态的卡片，同步刷新其最新 bot_username
                         cursor.execute(
                             """
                             UPDATE cards
-                            SET title = %s, content = %s, img = %s, buttons = %s, media_type = %s, user_id = %s, tg_file_id = %s, updated_at = %s
+                            SET title = %s, content = %s, img = %s, buttons = %s, media_type = %s, user_id = %s, tg_file_id = %s, bot_username = %s, updated_at = %s
                             WHERE card_id = %s
                             """,
-                            (data.title, data.content, db_img, db_buttons_str, media_type, incoming_user_id, final_tg_file_id, current_timestamp, card_id),
+                            (data.title, data.content, db_img, db_buttons_str, media_type, incoming_user_id, final_tg_file_id, active_bot_username, current_timestamp, card_id),
                         )
                 else:
                     final_tg_file_id = warm_telegram_media_cache(active_bot_token, incoming_user_id, db_img, media_type) if db_img else None
+                    # 指定了 card_id 但属于新卡片插入时，存入 bot_username
                     cursor.execute(
                         """
-                        INSERT INTO cards (card_id, title, content, img, buttons, media_type, status, user_id, tg_file_id, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO cards (card_id, title, content, img, buttons, media_type, status, user_id, tg_file_id, bot_username, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id, final_tg_file_id, current_timestamp, current_timestamp),
+                        (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id, final_tg_file_id, active_bot_username, current_timestamp, current_timestamp),
                     )
             else:
+                import random, string
                 card_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
                 final_tg_file_id = warm_telegram_media_cache(active_bot_token, incoming_user_id, db_img, media_type) if db_img else None
+                # 没有指定 card_id 纯全新创建卡片时，存入 bot_username
                 cursor.execute(
                     """
-                    INSERT INTO cards (card_id, title, content, img, buttons, media_type, status, user_id, tg_file_id, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO cards (card_id, title, content, img, buttons, media_type, status, user_id, tg_file_id, bot_username, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id, final_tg_file_id, current_timestamp, current_timestamp),
+                    (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id, final_tg_file_id, active_bot_username, current_timestamp, current_timestamp),
                 )
     except HTTPException:
         raise

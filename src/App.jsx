@@ -1021,6 +1021,24 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       }
     }
   };
+// ==========================================
+  // 📞 客服中心原生无缝唤起网关
+  // ==========================================
+  const handleContactSupport = () => {
+    setShowUserMenu(false); // 关闭下拉菜单
+
+    // 💡 替换提示：把下面的 'Your_Support_Bot' 换成你实际申请的客服机器人 Username（不需要带 @）
+    const SUPPORT_BOT_USERNAME = 'Your_Support_Bot'; 
+    const targetLink = `https://t.me/${SUPPORT_BOT_USERNAME.replace('@', '')}`;
+
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+      // 🚀 TG 真实环境下，使用 WebApp 原生方法打开，体验极佳，不会弹浏览器
+      window.Telegram.WebApp.openTelegramLink(targetLink);
+    } else {
+      // 🌐 普通浏览器环境降级外跳
+      window.open(targetLink, '_blank');
+    }
+  };
 
   // ==========================================
   // 🚀 模式一：Inline Mode (内联分享发布)
@@ -1207,7 +1225,10 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                 <FaLayerGroup className="text-indigo-500" /> {t('home_settings')}
               </button>
               <div className="h-px bg-gray-100 my-1 mx-2"></div>
-              <button onClick={() => { alert(t('home_calling_support')); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
+              <button 
+                onClick={handleContactSupport} // 👈 完美接入刚刚写好的跳转网关
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors"
+              >
                 <FaHeadset className="text-emerald-500" /> {t('home_support')}
               </button>
             </div>
