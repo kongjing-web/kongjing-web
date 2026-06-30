@@ -387,18 +387,22 @@ export default function App() {
     }
   }, [currentScreen, currentUser?.id]);
 
-  // 3. 完美防御型：卡片保存逻辑
+// 3. 完美防御型：卡片保存逻辑（修复版）
   const handleSaveCard = async (cardData) => {
+    setLoading(true); // 开启全局 Loading，防止用户在网络慢时重复点击保存
     try {
       const isEditing = !!cardData.id;
       const url = isEditing ? `${BASE_URL}/cards/${cardData.id}` : `${BASE_URL}/cards`;
+      
+      // 🛠️ 修复问题一：强效过滤纯文本卡片，有图才传 photo，没图坚决为 none
+      const hasMedia = !!(cardData.img && cardData.img.trim());
       
       const payload = {
         id: cardData.id ?? selectedCard?.id ?? undefined,
         title: cardData.title ?? '',
         content: cardData.content ?? '',
-        img: cardData.img ?? '',
-        media_type: cardData.media_type ?? 'photo',
+        img: hasMedia ? cardData.img : '', // 没图就传空字符串，清空后端可能残留的旧图
+        media_type: hasMedia ? (cardData.media_type ?? 'photo') : 'none', // 👈 纯文本时强制为 'none'
         buttons: typeof cardData.buttons === 'string' ? cardData.buttons : JSON.stringify(cardData.buttons || [])
       };
 
@@ -408,35 +412,31 @@ export default function App() {
         body: JSON.stringify(payload)
       });
 
-      // 🚀 核心改动：只要 response.ok (状态码 200/201)，就说明后端实打实地存进数据库了！
       if (response.ok) {
-        // 我们尝试安全解析 JSON，如果后端给的是 "OK" 导致报错，直接忽略，强行通车！
         try {
             await response.json();
         } catch (e) {
             console.log("后端返回了非标准JSON（比如'OK'），已自动忽略并继续：", e);
         }
 
-        // 完美衔接：去刷新列表，并退回首页
+        // 核心：只有真正入库成功，才刷新列表并跳回首页
         await fetchCards();
         setCurrentScreen('home');
         setSelectedCard(null);
       } else {
-        throw new Error('服务器响应异常');
+        throw new Error('服务器拒绝保存');
       }
 
     } catch (error) {
       console.error("请求失败:", error);
-      alert("连接服务器失败，已为您在本地临时更新。");
       
-      // 容错降轨：万一服务器彻底断开，本地临时充数
-      if (!cardData.id) {
-        const newCard = { ...cardData, id: 'LOCAL_' + Date.now(), views: 0, shares: 0, likes: 0, clicks: 0 };
-        setCards(prev => [newCard, ...prev]);
-      } else {
-        setCards(prev => prev.map(c => c.id === cardData.id ? cardData : c));
-      }
-      setCurrentScreen('home');
+      // 🛠️ 修复问题二：斩断危险的本地降级轨，直接弹窗报警
+      alert("❌ 保存失败：网络连接异常或服务器超时！请检查网络后重试。");
+      
+      // 【关键改动】这里不去切换当前页面，不清除选中卡片，让用户留在 EditorScreen 
+      // 这样用户的劳动成果（写了一大堆的文本和按钮）不会丢失，网络好了可以重新点“保存”
+    } finally {
+      setLoading(false);
     }
   };
 

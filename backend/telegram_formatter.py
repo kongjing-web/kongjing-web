@@ -127,8 +127,6 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
     严格洗白属性，同时保障文本安全转义
     """
     # 1. 优先对纯文本节点做转义，规避 TG 400 错误
-    # 💡【终极修复】必须先用列表收集，再统一执行 replace_with！
-    # 绝不能在动态遍历 DOM 树的同时销毁节点，这会彻底打断底层指针，导致 <code> 等标签被跳过或剥离。
     text_nodes = []
     for text_node in soup.find_all(text=True):
         if isinstance(text_node, NavigableString):
@@ -139,7 +137,7 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
     for node in text_nodes:
         node.replace_with(escape(node.string))
 
-    # 2. 精准过滤属性 (下方代码逻辑不变，完美放行 code)
+    # 2. 精准过滤属性 
     for tag in soup.find_all():
         if not isinstance(tag, Tag):
             continue
@@ -162,13 +160,21 @@ def clean_attributes_and_escape(soup: BeautifulSoup):
             if href.startswith(("http://", "https://", "tg://")):
                 tag["href"] = href
 
+        # 💡 修复点 1：全地形模糊匹配，彻底解决前端属性名/值不一致的死穴
         elif tag.name == "blockquote":
-            if "expandable" in attrs or "collapsible" in attrs or "collapsible" in attrs.get("class", []):
-                tag["expandable"] = ""
+            is_collapsible = False
+            for k, v in attrs.items():
+                k_lower = str(k).lower()
+                v_str = " ".join(v) if isinstance(v, list) else str(v).lower()
+                # 只要任何属性的键或值里包含 expandable 或 collapsible 信号，直接判定需要折叠
+                if "expandable" in k_lower or "collapsible" in k_lower or "expandable" in v_str or "collapsible" in v_str:
+                    is_collapsible = True
+                    break
+            
+            if is_collapsible:
+                tag["expandable"] = ""  # 塞入空属性，等待最后一步正则矫正
 
         elif tag.name == "code":
-            # 💡 这里仅对“多行代码”保留 language- 高亮属性
-            # 如果是“一键复制”的内联代码，它在这里会被洗白成干干净净的 <code>，TG 完美识别
             cls = attrs.get("class", [])
             cls_str = " ".join(cls) if isinstance(cls, list) else str(cls)
             if "language-" in cls_str:
@@ -205,17 +211,71 @@ def sanitize_for_telegram(html: str) -> str:
 
     result = soup.decode(formatter=None)
     result = result.replace("&amp;lt;", "&lt;").replace("&amp;gt;", "&gt;").replace("&amp;amp;", "&amp;")
+    
+    # 💡 修复点 2：换用终极硬核正则兜底
+    # 只要 blockquote 标签内部带有 expandable 关键字（不管 BS4 把它序列化成了 =" " 还是带了尾随空格）
+    # 一律强行格式化为 Telegram 官方最严格认可的标准无值标签：<blockquote expandable>
+    result = re.sub(
+        r'<blockquote\s+[^>]*expandable[^>]*>',
+        '<blockquote expandable>',
+        result,
+        flags=re.IGNORECASE
+    )
+    
     return result.strip()
 
 
 def truncate_caption(html: str, limit: int = 1024) -> str:
+    """
+    DOM 树级安全截断引擎：
+    既满足 Telegram 的字数限制，又绝对不破坏、不丢弃外层的 HTML 格式标签（如 blockquote expandable）
+    """
     if not html:
         return ""
-    temp_soup = BeautifulSoup(html, "html.parser")
-    pure_text = temp_soup.get_text()
+    
+    soup = BeautifulSoup(html, "html.parser")
+    pure_text = soup.get_text()
+    
+    # 如果本身就在安全长度内，直接原样返回
     if len(pure_text) <= limit:
         return html
-    return pure_text[:limit - 3] + "..."
+
+    # 触发超长保护：目标纯文本截断长度（预留 3 个字符给省略号）
+    target_text_len = limit - 3
+    current_len = 0
+
+    def truncate_node(node):
+        nonlocal current_len
+        # 如果是纯文本节点
+        if isinstance(node, NavigableString):
+            node_len = len(node.string)
+            if current_len + node_len > target_text_len:
+                remaining = target_text_len - current_len
+                # 在文本节点内部截断，并优雅续上省略号
+                truncated_text = node.string[:remaining] + "..."
+                node.replace_with(NavigableString(truncated_text))
+                current_len = target_text_len
+                return True  # 向上层发送“截断已完成”信号
+            else:
+                current_len += node_len
+        else:
+            # 如果是 Tag 节点（例如 blockquote, b, a 等），深层遍历其子节点
+            # 注意：必须转成 list 复制一份，因为遍历过程中可能会动态销毁（decompose）多余子节点
+            children = list(node.contents)
+            for child in children:
+                if current_len >= target_text_len:
+                    child.decompose()  # 字符配额已满，安全拔除后续所有多余标签和文本
+                else:
+                    done = truncate_node(child)
+                    if done:
+                        return True
+        return False
+
+    # 执行 DOM 树深度清洗截断
+    truncate_node(soup)
+    
+    # 重新序列化输出，BeautifulSoup 会完美补齐未闭合的标签
+    return soup.decode(formatter=None).strip()
 
 
 def smart_clean_inline_keyboard(buttons_list: list, card_id: str) -> list:
