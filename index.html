@@ -6,7 +6,14 @@
     <title>空境系统 - 卡片编辑器</title>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <script>
+      try {
+        eruda.init();
+      } catch (e) {
+        console.error("Eruda 初始化失败", e);
+      }
+</script>
   </head>
   <body>
     <div id="root"></div>

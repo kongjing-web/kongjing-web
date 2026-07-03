@@ -9,19 +9,19 @@ import Blockquote from '@tiptap/extension-blockquote';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { createLowlight, common } from 'lowlight';
 import EmojiPicker from 'emoji-picker-react';
+
+// 🛡️ 干净去重后的所有 Fa 图标集中引入
 import { 
   FaLayerGroup, FaEye, FaShare, FaHeart, FaMousePointer, 
   FaChartBar, FaTrashAlt, FaEdit, FaChevronDown,
   FaCoins, FaBell, FaBookOpen, FaHeadset, FaPaperPlane,
   FaArrowLeft, FaUsers, FaClipboardList, FaBullhorn, FaLock,
-  FaTelegram,
-  FaCheckCircle,
-  FaRegCircle 
+  FaTelegram, FaCheckCircle, FaRegCircle,
+  FaRobot, FaKey, FaCopy, FaExternalLinkAlt, FaArrowRight, FaTimes, FaToggleOn
 } from "react-icons/fa";
-import { FaRobot, FaKey, FaCopy, FaExternalLinkAlt, FaArrowRight, FaTimes, FaToggleOn, FaExternalLinkAlt} from 'react-icons/fa';
 
 import { useTranslation } from 'react-i18next';
-import './i18n'; 
+import './i18n';
 
 // ==========================================================================
 // 后端配置中心
