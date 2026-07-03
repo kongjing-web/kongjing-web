@@ -508,9 +508,10 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "video_file_id": tg_file_id_str, 
                     "title": title or "精美可视化视频卡片",
-                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
+                    "description": short_description,  
                     "caption": caption,
-                    "parse_mode": "HTML"
+                    "parse_mode": "HTML",
+                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭视频网页预览
                 }
             elif norm_media == "gif":
                 inline_result = {
@@ -518,9 +519,10 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "gif_file_id": tg_file_id_str,   
                     "title": title or "精美动态卡片",
-                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
+                    "description": short_description,  
                     "caption": caption,
-                    "parse_mode": "HTML"
+                    "parse_mode": "HTML",
+                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭GIF网页预览
                 }
             else:
                 inline_result = {
@@ -528,9 +530,10 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "photo_file_id": tg_file_id_str, 
                     "title": title or "精美可视化卡片",
-                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
+                    "description": short_description,  
                     "caption": caption,
-                    "parse_mode": "HTML"
+                    "parse_mode": "HTML",
+                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭图片网页预览
                 }
         else:
             # 🔄 纯净退路：针对历史遗留无 file_id 的卡片，无缝降级回绝对 URL 爬取模式
@@ -539,11 +542,12 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                 "type": "photo",
                 "id": result_id,
                 "title": title or "精美可视化卡片",
-                "description": short_description,      # 🌟 修复：降级模式下也必须注入纯文本预览
+                "description": short_description,      
                 "photo_url": img,
                 "thumb_url": img,
                 "caption": caption,
-                "parse_mode": "HTML"
+                "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭降级图片网页预览
             } 
     else:
         # 文本卡片保持原本的 article 逻辑
@@ -551,12 +555,13 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
             "type": "article",
             "id": result_id,
             "title": title or "精美可视化卡片",
-            "description": short_description,          # 🌟 统一使用提取好的无标签干净摘要
+            "description": short_description,          
             "input_message_content": {
                 "message_text": caption,
-                "parse_mode": "HTML"
+                "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True}  # 💡 ⚠️注意：纯文本卡片参数必须写在 input_message_content 内部！
             }
-        } 
+        }
 
     if reply_markup:
         inline_result["reply_markup"] = reply_markup 
@@ -1007,10 +1012,15 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
 
     # 3. 🛡️ 双重防爆验证：优先使用该用户专属配置的 Bot 密钥进行解密；失败则由母舰系统内置 Token 兜底鉴权
     user_info = None
+    entrance_type = "master"
     if user_bot_token:
         user_info = verify_telegram_init_data(init_data, user_bot_token)
+        if user_info:
+            entrance_type = "custom"
     if not user_info:
         user_info = verify_telegram_init_data(init_data, BOT_TOKEN)
+        if user_info:
+            entrance_type = "master"
         
     if not user_info:
         raise HTTPException(status_code=403, detail="身份认证已失效或数据已被非法篡改") 
@@ -1047,6 +1057,7 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
             "language": row[6] or 'zh',
             "monthly_published_count": row[7] or 0,
             "last_reset_month": row[8] or '',
+            "entrance_type": entrance_type
         } 
 
     return {
@@ -1060,6 +1071,7 @@ async def get_current_tg_user(authorization: Optional[str] = Header(None)) -> di
         "language": 'zh',
         "monthly_published_count": 0,
         "last_reset_month": '',
+        "entrance_type": entrance_type
     } 
 
 def get_user_permission(user: dict) -> dict:
@@ -1385,7 +1397,95 @@ def warm_telegram_media_cache(bot_token: str, chat_id: str, media_url: str, medi
         print(f"⚠️ [缓存预热降级] 捕获 file_id 偶发性失败（不影响基础存储事务）: {e}")
     return None
 
+@app.get("/user/gate_check")
+async def check_user_bot_gate_status(current_user: dict = Depends(get_current_tg_user)):
+    """
+    🔥 空境专属风控与强引导网关
+    通过双重验签指纹 + Telegram 官方实时对账，输出三大拦截状态机
+    """
+    bot_token = current_user.get("bot_token", "").strip()
+    bot_username = current_user.get("bot_username", "").strip()
+    entrance_type = current_user.get("entrance_type", "master")
 
+    # -----------------------------------------------------------------
+    # 状态阶梯 1：检测是否绑定专属 Bot (对应你的需求 2)
+    # -----------------------------------------------------------------
+    if not bot_token:
+        return {
+            "code": 200,
+            "status": "unbound",
+            "message": "用户尚未绑定任何专属租户 Bot",
+            "data": {
+                "is_bound": False,
+                "inline_enabled": False,
+                "entrance_matches": False,
+                "bound_bot_username": ""
+            }
+        }
+
+    # -----------------------------------------------------------------
+    # 状态阶梯 2：动态检测专属 Bot 的 Inline 内联功能是否开通 (对应你的需求 3)
+    # -----------------------------------------------------------------
+    inline_enabled = False
+    try:
+        # 实时穿透 Telegram 骨干网，核对 supports_inline_queries 字段
+        # 设置 3 秒超时防抖，防止因特殊波动卡死你的服务主线
+        me_res = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=3)
+        if me_res.ok:
+            inline_enabled = me_res.json().get("result", {}).get("supports_inline_queries", False)
+    except Exception as e:
+        print(f"[网关对账警告] 动态穿透内联功能失败: {e}")
+        # 如果突发网关超时，这里做弹性降级，默认信任已开启，交由后续发布卡片时做终极捕获
+        inline_enabled = True 
+
+    # -----------------------------------------------------------------
+    # 状态阶梯 3：比对小程序入口一致性 (对应你的需求 1)
+    # -----------------------------------------------------------------
+    # 如果 entrance_type == "custom"，说明它当下确实是从自己的专属 Bot 里打开的
+    entrance_matches = (entrance_type == "custom")
+
+    # 逻辑分流 A：已绑定，但未在 BotFather 开启内联
+    if not inline_enabled:
+        return {
+            "code": 200,
+            "status": "inline_disabled",
+            "message": "专属 Bot 已就位，但尚未在 BotFather 开启内联(Inline Mode)",
+            "data": {
+                "is_bound": True,
+                "inline_enabled": False,
+                "entrance_matches": entrance_matches,
+                "bound_bot_username": bot_username
+            }
+        }
+
+    # 逻辑分流 B：已绑定且开通了内联，但是“抄近路”从母舰/非绑定Bot溜进来的
+    if not entrance_matches:
+        return {
+            "code": 200,
+            "status": "bot_mismatch",
+            "message": "请从您绑定的专属 Bot 内部进入小程序，否则无法保存和发布卡片",
+            "data": {
+                "is_bound": True,
+                "inline_enabled": True,
+                "entrance_matches": False,
+                "bound_bot_username": bot_username
+            }
+        }
+
+    # -----------------------------------------------------------------
+    # 终极绿灯：全部对账完毕，完美闭环，无缝放行
+    # -----------------------------------------------------------------
+    return {
+        "code": 200,
+        "status": "ok",
+        "message": "安全对账通过，当前运行于绝对可信环境",
+        "data": {
+            "is_bound": True,
+            "inline_enabled": True,
+            "entrance_matches": True,
+            "bound_bot_username": bot_username
+        }
+    }
 # -----------------------------
 # 公开统计接口（无鉴权）
 # -----------------------------
@@ -2220,7 +2320,8 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
         tg_file_id_str = str(tg_file_id or "").strip()
         
         payload = {
-            "chat_id": target_chat_id
+            "chat_id": target_chat_id,
+            "link_preview_options": {"is_disabled": True}
         }
         
         if reply_markup and reply_markup.get("inline_keyboard"):

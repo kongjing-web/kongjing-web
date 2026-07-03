@@ -18,6 +18,7 @@ import {
   FaCheckCircle,
   FaRegCircle 
 } from "react-icons/fa";
+import { FaRobot, FaKey, FaCopy, FaExternalLinkAlt, FaArrowRight } from 'react-icons/fa';
 
 import { useTranslation } from 'react-i18next';
 import './i18n'; 
@@ -906,6 +907,9 @@ function AdminDashboard({ currentUser, onBack, onAnnouncementChange }) {
   );
 }
 
+
+
+
 /* ==========================================================================
    1. 首页组件 (HomeScreen)
    ========================================================================== */
@@ -935,6 +939,45 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   const [publishingCardForDirect, setPublishingCardForDirect] = useState(null);
   const [targetChatId, setTargetChatId] = useState('');
    const [directTargets, setDirectTargets] = useState([]);
+
+// 🛡️ 核心新增：专属 Bot 状态验证网关
+  const [gateStatus, setGateStatus] = useState('checking'); // checking, unbound, inline_disabled, bot_mismatch, ok
+  const [gateData, setGateData] = useState(null);
+
+  // 🔄 挂载时全自动穿透对账
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
+      setGateStatus('ok'); // 兼容普通浏览器开发测试环境，不添堵
+      return;
+    }
+
+    const verifyGateStatus = async () => {
+      try {
+        const initData = window.Telegram.WebApp.initData;
+        const response = await fetch('https://www.kongjing.online/api/user/gate_check', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${initData}`
+          }
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          if (result.code === 200) {
+            setGateStatus(result.status || 'ok');
+            setGateData(result.data || null);
+            return;
+          }
+        }
+        setGateStatus('ok'); // 后端万一波动，降级放行，保证高可用性
+      } catch (error) {
+        console.error("【空境网关】对账请求异常:", error);
+        setGateStatus('ok'); // 异常降级兜底
+      }
+    };
+
+    verifyGateStatus();
+  }, []);  
   
   // 长按定时器逻辑引用
   const longPressTimer = useRef(null);
@@ -1341,7 +1384,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                             </div>
                           ) : (
                             // 无论是 gif 还是 photo，只要有携带 img 地址，就正常渲染图片，且删除了 picsum 随机图兜底
-                            < img src={card.img} className="w-full h-full object-cover" alt="缩略图" />
+                            <img src={card.img} className="w-full h-full object-cover" alt="缩略图" />
                           )}
                         </div>
                       ) : null /* 👈 核心：如果没有图，直接返回 null，左侧不占位 */}
@@ -1525,6 +1568,118 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           </div>
         </div>
       )}
+
+{/* ==========================================
+          🛡️ 网关拦截弹窗 A：未绑定专属 Bot (软性引导)
+      ========================================== */}
+      {gateStatus === 'unbound' && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-xs p-5 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+            <div className="w-10 h-10 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500 mb-3 animate-pulse">
+              <FaLayerGroup size={18} />
+            </div>
+            <h3 className="text-sm font-black text-gray-950 flex items-center gap-2">
+              {t('gate_unbound_title') || '独立全套托管未就位'}
+            </h3>
+            <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
+              {t('gate_unbound_desc') || '您目前仍在使用母舰公共通道。升级独立专属 Bot，即可消除所有公共痕迹，解锁无限卡片发布与品牌归属权。'}
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button 
+                onClick={() => setGateStatus('ok')} 
+                className="flex-1 py-2 text-xs font-bold text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                {t('common_cancel') || '暂不升级'}
+              </button>
+              <button 
+                onClick={() => { onNavigateSettings(); setGateStatus('ok'); }} 
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-black py-2 rounded-xl text-xs shadow-lg shadow-blue-100 active:scale-95 transition-all"
+              >
+                {t('gate_go_bind') || '去配置专属Bot'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==========================================
+          🛡️ 网关拦截弹窗 B：专属 Bot 没开内联 (硬性死锁)
+      ========================================== */}
+      {gateStatus === 'inline_disabled' && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-xs p-5 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+            <div className="w-10 h-10 rounded-2xl bg-red-50 flex items-center justify-center text-red-500 mb-3">
+              <FaPaperPlane size={16} />
+            </div>
+            <h3 className="text-sm font-black text-gray-950">
+              {t('gate_inline_disabled_title') || '内联模式(Inline)未激活'}
+            </h3>
+            <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
+              检测到您已绑定专属 Bot <span className="font-bold text-slate-800">@{gateData?.bound_bot_username}</span>，但它在 Telegram 官方骨干网中尚未配置 Inline 搜索权限，这将导致您的卡片无法完成气泡直发。
+            </p>
+            
+            <div className="my-4 bg-slate-50 rounded-2xl p-3 border border-slate-100 text-[11px] text-slate-600 space-y-1 font-medium">
+              <div className="text-slate-400 font-bold text-[10px] uppercase tracking-wider mb-1">只需 3 步开通：</div>
+              <div>1. 唤起官方 <span className="text-blue-600 font-bold">@BotFather</span></div>
+              <div>2. 发送指令 <code className="bg-slate-200 px-1 rounded font-mono">/setinline</code> 并选中您的 Bot</div>
+              <div>3. 随便输入一句简介（如：空境卡片中心）即可</div>
+            </div>
+
+            <button 
+              onClick={() => {
+                if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+                  window.Telegram.WebApp.openTelegramLink("https://t.me/BotFather");
+                } else {
+                  window.open("https://t.me/BotFather", "_blank");
+                }
+              }} 
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
+            >
+              <FaTelegram size={12} className="text-blue-400" /> 立即前往 @BotFather 激活
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==========================================
+          🛡️ 网关拦截弹窗 C：入口不匹配 (绝对硬性死锁拦截)
+      ========================================== */}
+      {gateStatus === 'bot_mismatch' && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-xs p-5 shadow-2xl border border-gray-100 animate-in zoom-in-95 duration-200">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-3">
+              <FaLock size={16} />
+            </div>
+            <h3 className="text-sm font-black text-gray-950">
+              {t('gate_mismatch_title') || '安全入口不匹配拦截'}
+            </h3>
+            <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
+              您当前正在通过【公共母舰】或其他渠道访问小程序。
+            </p>
+            <p className="text-[11px] text-red-500 mt-1 font-semibold leading-relaxed">
+              由于您已经配置了专属私有租户，为了保证卡片指纹验签的防伪唯一性，必须从您自己的专属 Bot 内部进入小程序。
+            </p>
+
+            <div className="my-4 p-2.5 bg-indigo-50/50 rounded-xl border border-indigo-100/40 text-center">
+              <span className="text-xs font-black text-indigo-950">@{gateData?.bound_bot_username}</span>
+            </div>
+
+            <button 
+              onClick={() => {
+                const targetBotUrl = `https://t.me/${gateData?.bound_bot_username}`;
+                if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+                  window.Telegram.WebApp.openTelegramLink(targetBotUrl);
+                } else {
+                  window.open(targetBotUrl, '_blank');
+                }
+              }} 
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-2.5 rounded-xl text-xs shadow-lg shadow-indigo-100 active:scale-95 transition-all flex items-center justify-center gap-1.5"
+            >
+              一键降落到我的专属 Bot 舱门
+            </button>
+          </div>
+        </div>
+      )}      
 
     </div>
   );
