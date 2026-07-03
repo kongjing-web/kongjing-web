@@ -1193,15 +1193,17 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     fetchDirectTargets();
   }, [publishingCardForDirect]);
 // ==========================================================================
-  // 🛡️ 链式状态机流水线拦截处理器
+  // 🛡️ 链式状态机流水线拦截处理器 (升级：改为图层叠加模式，不阻断底层首页渲染)
   // ==========================================================================
+  let gateOverlay = null; // 默认为空，不影响首页渲染
+
   if (!isGateLoading && gateData) {
     
     // 【一阶拦截】：尚未绑定专属 Bot (is_bound === false)
     if (gateData.is_bound === false && !isGateDismissed) {
-      return (
-        <div className="fixed inset-0 z-[100] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 select-none">
-          <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+      gateOverlay = (
+        <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
+          <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
             {/* [X] 右上角会话关闭按钮 */}
             <button 
               onClick={() => setIsGateDismissed(true)} 
@@ -1231,10 +1233,10 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     }
 
     // 【二阶拦截】：已绑定但未开通 Inline 内联模式 (is_inline_enabled === false)
-    if (gateData.is_bound === true && gateData.is_inline_enabled === false && !isGateDismissed) {
-      return (
-        <div className="fixed inset-0 z-[100] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 select-none">
-          <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+    else if (gateData.is_bound === true && gateData.is_inline_enabled === false && !isGateDismissed) {
+      gateOverlay = (
+        <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
+          <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
             {/* [X] 右上角会话关闭按钮 */}
             <button 
               onClick={() => setIsGateDismissed(true)} 
@@ -1275,14 +1277,14 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     }
 
     // 【三阶全硬级阻断】：防伪入口不匹配拦截 (current_entrance_bot != bound_bot_username)
-    if (gateData.is_bound === true && gateData.is_inline_enabled === true) {
+    else if (gateData.is_bound === true && gateData.is_inline_enabled === true) {
       const entrance = cleanBotName(gateData.current_entrance_bot);
       const bound = cleanBotName(gateData.bound_bot_username);
       
       if (entrance !== bound) {
-        return (
-          <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 select-none">
-            <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-200 p-6 shadow-2xl text-center animate-in fade-in zoom-in-95 duration-200">
+        gateOverlay = (
+          <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[3px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
+            <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-200 p-6 shadow-2xl text-center animate-in zoom-in-95 duration-200">
               <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-500 mx-auto mb-4 animate-pulse">
                 <FaLock size={22} />
               </div>
@@ -1638,6 +1640,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           </div>
         </div>
       )}
+      {gateOverlay}
 
     </div>
   );
