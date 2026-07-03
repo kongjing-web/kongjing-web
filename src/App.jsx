@@ -18,7 +18,7 @@ import {
   FaCheckCircle,
   FaRegCircle 
 } from "react-icons/fa";
-import { FaRobot, FaKey, FaCopy, FaExternalLinkAlt, FaArrowRight } from 'react-icons/fa';
+import { FaRobot, FaKey, FaCopy, FaExternalLinkAlt, FaArrowRight, FaTimes, FaToggleOn, FaExternalLinkAlt} from 'react-icons/fa';
 
 import { useTranslation } from 'react-i18next';
 import './i18n'; 
