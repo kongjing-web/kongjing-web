@@ -1868,6 +1868,32 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
 function SettingsScreen({ currentUser, onBack, onSave }) {
   // 👈 1. 引入官方多语言 Hook 实例
   const { t, i18n } = useTranslation();
+// 🛡️ 联动新增：设置页独立拉取内联开通指标
+  const [localGate, setLocalGate] = useState(null);
+
+  useEffect(() => {
+    const checkLocalGate = async () => {
+      try {
+        const initData = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initData : '';
+        const response = await fetch('https://www.kongjing.online/api/user/gate_check', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${initData}`
+          }
+        });
+        if (response.ok) {
+          const result = await response.json();
+          if (result.status === 'success' || result.code === 200) {
+            setLocalGate(result.data);
+          }
+        }
+      } catch (err) {
+        console.error("设置页获取网关失败:", err);
+      }
+    };
+    checkLocalGate();
+  }, []);  
 
   const [botToken, setBotToken] = useState(currentUser?.bot_token || '');
   const [language, setLanguage] = useState(currentUser?.language || 'en'); // 👈 默认强制初始化为 en
