@@ -982,125 +982,166 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> Optional[dict]:
         return None 
 
 async def get_current_tg_user(
+    request: Request,
     authorization: Optional[str] = Header(None),
-    entrance_bot: Optional[str] = Query(None)  # 👈 核心改装：完美接收前端从 URL 动态剥离并上报的当前实际入口 Bot 名字
-) -> dict:
-    """
-    【空境 2.0 工业级多租户鉴权网关】
-    功能：解耦入口与资产，支持任意合法 Bot 入口全无感放行，并为跨端新用户提供全自动落库注册保障。
-    """
+    entrance_bot: Optional[str] = Query(None) # 🛰️ 接收前端传来的浏览器实际宿主 ?entrance_bot=xxx
+):
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="请重新从 Telegram 打开小程序以完成登录授权") 
+        raise HTTPException(status_code=401, detail="未登录或凭证不完整")
     
-    init_data = authorization.split(" ", 1)[1] 
+    init_data = authorization.split(" ")[1]
     
-    # 1. 🔍 原始解析：初步逆解出数据体内的文本属性（不含信任度）以定位当前用户 ID
+    # 🧼 清洗入口 Bot 名字
+    clean_entrance = (entrance_bot or "").replace("@", "").strip().lower()
+    
+    if not clean_entrance:
+        # 💡【自适应感知降级】：如果前端由于跨端或首次进门未传当前入口参数，
+        # 自动调用系统函数自适应拉取并补全为【公共母舰】的用户名，确保全网对账链条不脱节！
+        clean_entrance = get_global_bot_username().lower()
+    
+    # =========================================================================
+    # Step 1. 💡 【无感盲解析】：不校验签名，先强行剥离出全网唯一的 Telegram ID
+    # =========================================================================
+    tg_id = None
     try:
         parsed_data = dict(parse_qsl(init_data))
-        user_data_str = parsed_data.get("user", "{}")
-        user_info_raw = json.loads(user_data_str)
-        telegram_id = str(user_info_raw.get("id") or "").strip()
+        user_data_str = parsed_data.get("user")
+        if user_data_str:
+            tg_id = str(json.loads(user_data_str).get("id", ""))
     except Exception:
-        raise HTTPException(status_code=403, detail="授权身份数据片段严重残缺")
+        raise HTTPException(status_code=403, detail="无法解析 Telegram 身份指纹")
         
-    if not telegram_id:
-        raise HTTPException(status_code=403, detail="身份数据不完整")
+    if not tg_id:
+        raise HTTPException(status_code=403, detail="Telegram 用户数据载荷缺失")
 
-    verify_token = None
+    # =========================================================================
+    # Step 2. 🗄️ 全局对账准备：去中央数据库捞取两端（用户端、入口端）的 Token 凭证
+    # =========================================================================
+    user_bot_token = None
+    entrance_bot_token = None
+    user_row = None
     
-    # 1. 🔍 如果前端上报了当前入口 Bot 名字，直接去数据库捞取其托管的 Token
-    if entrance_bot:
-        current_entrance = entrance_bot.strip()
-        with get_db_connection() as (_, cursor):
-            cursor.execute("SELECT bot_token FROM users WHERE bot_username = %s LIMIT 1", (current_entrance,))
-            row = cursor.fetchone()
-            if row and row[0]:
-                verify_token = row[0].strip()
-            # 💡 你的严密逻辑：如果传了入口但数据库里没有，说明是未注册渠道，verify_token 保持为 None
-
-    # 2. ⚖️ 裁决最终验签密钥：查到了就用专属 Token，没查到（说明是主舰或直连）直接用主舰 BOT_TOKEN 兜底
-    target_token = verify_token if verify_token else BOT_TOKEN
-
-    # 3. 🔐 执行标准的 Telegram 官方算法验签
-    user_info = verify_telegram_init_data(init_data, target_token)
-    
-    # 如果验签失败，说明要么数据过期，要么是用非法/未注册的 Bot 伪造的请求，直接无情拒绝
-    if not user_info:
-        raise HTTPException(status_code=403, detail="身份认证已失效或安全入口凭证不匹配")
-
-    # 4. 🔄 智能资产核对与跨端新用户“无感自动落库”机制（核心修复点）
     with get_db_connection() as (conn, cursor):
+        # A. 查当前访问者在中央底座中是否已有档案
         cursor.execute(
-            """SELECT telegram_id, username, role, vip_until, bot_token, bot_username, 
-                      language, monthly_published_count, last_reset_month 
-               FROM users WHERE telegram_id = %s""",
-            (telegram_id,),
+            "SELECT telegram_id, username, role, vip_until, bot_token, bot_username FROM users WHERE telegram_id = %s",
+            (tg_id,)
         )
-        row = cursor.fetchone() 
-
-        # 🔥【关键闭环】：如果是通过别人发布的卡片/别人的 Bot 第一次进来的全新裂变用户
-        if not row:
-            username = str(user_info.get("username") or "")
-            # 立即执行防御性自动落库插入，确保其档案在系统内诞生
-            cursor.execute("""
-                INSERT INTO users (telegram_id, username, role, language)
-                VALUES (%s, %s, 'user', 'zh')
-                ON CONFLICT (telegram_id) DO NOTHING
-            """, (telegram_id, username))
+        user_row = cursor.fetchone()
+        if user_row:
+            user_bot_token = user_row[4] # 用户自己历史绑定的专属租户 Token
             
-            # 重新将其读出，赋予后续业务完整的上下文字段
+        # B. 查当前正在点开的这个宿主 Bot，系统里有没有对应的租户进行过 Token 归档
+        if clean_entrance:
             cursor.execute(
-                """SELECT telegram_id, username, role, vip_until, bot_token, bot_username, 
-                          language, monthly_published_count, last_reset_month 
-                   FROM users WHERE telegram_id = %s""",
-                (telegram_id,),
+                "SELECT bot_token FROM users WHERE LOWER(bot_username) = %s LIMIT 1",
+                (clean_entrance,)
             )
-            row = cursor.fetchone()
+            bot_row = cursor.fetchone()
+            if bot_row:
+                entrance_bot_token = bot_row[0] # 当前入口租户的 Token
 
-    # 5. 👑 身份特权裁决与封禁过滤
-    if row:
-        role = row[2] or 'user'
-        vip_until = row[3] or 0
-        admin_super_id = str(os.getenv("ADMIN_SUPER_ID") or "").strip()
-        current_tg_id = str(telegram_id).strip()
+    # =========================================================================
+    # Step 3. 🔍 【多策略对账】：盲喂验证函数，实现全网交叉动态验签
+    # =========================================================================
+    user_payload = None
+    
+    # 🌟 策略 A：如果当前入口 Bot 在系统里有归档，优先用入口 Token 去校准签名（漫游场景的核心）
+    if entrance_bot_token:
+        user_payload = verify_telegram_init_data(init_data, entrance_bot_token)
         
-        # 站长特权硬卡点
-        if admin_super_id and current_tg_id == admin_super_id:
-            role = 'superuser'
-            
-        # 调起标准大脑进行权限、黑名单判定
-        perm = get_user_permission({"role": role, "vip_until": vip_until})
-        if perm["is_banned"]:
-            raise HTTPException(status_code=403, detail="您的账号已被封禁，无法继续使用服务") 
-            
-        return {
-            "id": row[0],
-            "telegram_id": row[0],
-            "username": row[1] or str(user_info.get("username") or ""),
-            "role": role,
-            "vip_until": row[3] or 0,
-            "bot_token": row[4] or "",
-            "bot_username": row[5] or "",
-            "language": row[6] or 'zh',
-            "monthly_published_count": row[7] or 0,
-            "last_reset_month": row[8] or '',
-            "current_entrance_bot": entrance_bot or ""  # 透传当前实际入口，供业务端进行判定
-        } 
+    # 🌟 策略 B：如果没有或失败了（比如跨端或缓存抖动），用该用户自己绑定的 Token 去尝试校准
+    if not user_payload and user_bot_token:
+        user_payload = verify_telegram_init_data(init_data, user_bot_token)
+        
+    # 🌟 策略 C：如果依然无解，说明是新小白，或者从母舰进门，直接用系统内置的母舰 BOT_TOKEN 兜底
+    if not user_payload and BOT_TOKEN:
+        user_payload = verify_telegram_init_data(init_data, BOT_TOKEN)
 
-    # 极端防爆兜底（由于上方有自动插入，理论上不会触发这里）
+    # =========================================================================
+    # Step 4. ⚖️ 终审裁决与【病毒式静默落库】
+    # =========================================================================
+    if not user_payload:
+        # 三道防火墙全部击穿，说明是未在平台归档过 Token 的非法第三方克隆 Bot，物理斩断！
+        raise HTTPException(
+            status_code=403, 
+            detail="安全验证失败：当前测试 Bot 尚未配置 Token 归档，无法直接进门。请先前往主舰绑定系统。"
+        )
+
+    # 顺利通关：如果中央底座已有该老用户，直接拼装上下文放行
+    if user_row:
+        return {
+            "telegram_id": user_row[0],
+            "username": user_row[1],
+            "role": user_row[2],
+            "vip_until": user_row[3],
+            "bot_token": user_row[4],
+            "bot_username": user_row[5],
+            "current_entrance_bot": clean_entrance
+        }
+    else:
+        # 🔥【核心修正：裂变闭环】新用户 D 从租户 B 的 Bot 进门，验签通过的一瞬间，原地执行“静默自动落库”！
+        username = user_payload.get("username", "")
+        with get_db_connection() as (conn, cursor):
+            cursor.execute(
+                """
+                INSERT INTO users (telegram_id, username, role, vip_until, balance, bot_token, bot_username, language)
+                VALUES (%s, %s, 'user', 0, 0, '', '', 'zh')
+                ON CONFLICT (telegram_id) DO NOTHING
+                """,
+                (tg_id, username)
+            )
+        
+        # 原地激活为合法系统用户，让后续所有查 users 表的业务路由（卡片列表、充值等）永不抛 404
+        return {
+            "telegram_id": tg_id,
+            "username": username,
+            "role": "user",
+            "vip_until": 0,
+            "bot_token": "",
+            "bot_username": "",
+            "current_entrance_bot": clean_entrance,
+            "is_new_user": True
+        }
+
+@app.get("/user/gate_check")
+async def check_user_bot_gate_status(current_user: dict = Depends(get_current_tg_user)):
+    """
+    【纯净中央数字底座听诊网关】
+    后端绝不包含任何硬编码的文案或业务级卡死阻断逻辑。
+    只输出 4 个精确反映客观技术指标的黄金数据，判决与展示全权下放到前端状态机。
+    """
+    bot_token = current_user.get("bot_token", "").strip()
+    bot_username = current_user.get("bot_username", "").strip()
+    entrance_bot = current_user.get("current_entrance_bot", "").strip()
+    
+    # 指标 1：用户本身是否绑定了任何专属 Bot
+    is_bound = bool(bot_token and bot_username)
+    
+    # 指标 2：该绑定的 Bot 是否已经开通了 Telegram 官方的 Inline (内联) 分享模式
+    is_inline_enabled = False
+    if is_bound:
+        try:
+            # 🔍 实时连线 TG 官方总线嗅探 getMe 指标
+            res = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=3)
+            if res.ok:
+                bot_info = res.json().get("result", {})
+                # supports_inline_queries 为 TG 官方返回的是否在 BotFather 开启了内联的硬真值标记
+                is_inline_enabled = bool(bot_info.get("supports_inline_queries", False))
+        except Exception as e:
+            print(f"[中央网关提示] 预检自定义 Bot 官方内联状态产生网络抖动: {e}")
+            is_inline_enabled = False # 超时或网络异常时优雅降级，不卡死用户体验
+            
     return {
-        "id": telegram_id,
-        "telegram_id": telegram_id,
-        "username": str(user_info.get("username") or ""),
-        "role": 'user',
-        "vip_until": 0,
-        "bot_token": "",
-        "bot_username": "",
-        "language": 'zh',
-        "monthly_published_count": 0,
-        "last_reset_month": '',
-        "current_entrance_bot": entrance_bot or ""
-    } 
+        "code": 200,
+        "status": "success",
+        "data": {
+            "is_bound": is_bound,                  # 📊 1. 用户是否已绑定专属 Bot (True/False)
+            "bound_bot_username": bot_username,    # 📊 2. 用户绑定的专属 Bot 名字 (无则为空字符串)
+            "is_inline_enabled": is_inline_enabled, # 📊 3. 专属 Bot 是否已在官方开通内联 (True/False)
+            "current_entrance_bot": entrance_bot   # 📊 4. 用户当前实际打开小程序的入口 Bot 名字 (自适应补全)
+        }
+    }
 
 def get_user_permission(user: dict) -> dict:
     """
@@ -1426,45 +1467,7 @@ def warm_telegram_media_cache(bot_token: str, chat_id: str, media_url: str, medi
     return None
 
 # 🚪 2. 🔥 新增/重构核心对账网关：纯净的“指标数据听诊器”
-@app.get("/user/gate_check")
-async def check_user_bot_gate_status(current_user: dict = Depends(get_current_tg_user)):
-    """
-    【纯净数字底座状态透传接口】
-    后端绝不包含任何文案或业务阻断逻辑，只输出 4 个反映客观技术状态的黄金指标。
-    判决和 UI 展现方式全权下放到前端 HomeScreen 状态机。
-    """
-    bot_token = current_user.get("bot_token", "").strip()
-    bot_username = current_user.get("bot_username", "").strip()
-    entrance_bot = current_user.get("current_entrance_bot", "").strip()
-    
-    # 指标 1：用户本身是否绑定了任何 Bot
-    is_bound = bool(bot_token and bot_username)
-    
-    # 指标 2：该绑定的 Bot 是否已经开通了 Telegram 官方的 Inline 模式
-    is_inline_enabled = False
-    
-    if is_bound:
-        try:
-            # 🔍 直连 Telegram 官方网关 getMe 实时嗅探
-            res = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=3)
-            if res.ok:
-                bot_info = res.json().get("result", {})
-                # supports_inline_queries 是 TG 官方返回的是否在 BotFather 开启了内联的真值标记
-                is_inline_enabled = bool(bot_info.get("supports_inline_queries", False))
-        except Exception as e:
-            print(f"[中央网关提示] 预检自定义 Bot 官方内联状态产生网络抖动: {e}")
-            is_inline_enabled = False # 超时或抖动时默认不阻断，优雅返回 False
 
-    return {
-        "code": 200,
-        "status": "success",
-        "data": {
-            "is_bound": is_bound,                     # 📊 1. 用户是否已绑定专属 Bot (True/False)
-            "bound_bot_username": bot_username,       # 📊 2. 用户绑定的专属 Bot 名字 (无则为空字符串)
-            "is_inline_enabled": is_inline_enabled,   # 📊 3. 专属 Bot 是否已在官方开通内联 (True/False)
-            "current_entrance_bot": entrance_bot      # 📊 4. 用户当前实际打开小程序的入口 Bot 名字
-        }
-    }
 # -----------------------------
 # 公开统计接口（无鉴权）
 # -----------------------------

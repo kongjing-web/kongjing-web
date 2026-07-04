@@ -966,7 +966,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   // 3. 辅助清洗函数
   const cleanBotName = (name) => (name || '').replace('@', '').trim().toLowerCase();
 
-  // 4. 🚀 核心听诊机制：此时 isAnonymous 已安全就绪
+// 4. 🚀 核心听诊机制：此时 isAnonymous 已安全就绪
   useEffect(() => {
     const fetchGateCheck = async () => {
       if (isAnonymous) {
@@ -976,14 +976,21 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       try {
         const initData = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initData : '';
         const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+      
+        // 🛰️ 1. 从 URL 中提取当前宿主 Bot 标识)
         const currentEntrance = urlParams.get('bot') || '';        
-        const response = await fetch('https://www.kongjing.online/api/user/gate_check', {
+        
+        // 🚀【核心修正】：将入口参数以 ?entrance_bot=xxx 的形式无缝喂给后端网关
+        const apiUrl = `https://www.kongjing.online/api/user/gate_check?entrance_bot=${encodeURIComponent(currentEntrance)}`;
+        
+        const response = await fetch(apiUrl, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${initData}`
           }
         });
+     
         if (response.ok) {
           const result = await response.json();
           if (result.status === 'success' || result.code === 200) {
