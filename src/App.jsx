@@ -23,6 +23,46 @@ import {
 import { useTranslation } from 'react-i18next';
 import './i18n';
 
+if (typeof window !== 'undefined') {
+  // 1. 抓取 URL 中的 bot 参数
+  const urlParams = new URLSearchParams(window.location.search);
+  const entranceBot = urlParams.get('bot') || urlParams.get('entrance_bot');
+  
+  // 2. 只要抓到一次，就死死存入缓存，防止后续路由跳转导致 URL 参数丢失
+  if (entranceBot) {
+    sessionStorage.setItem('kongjing_entrance_bot', entranceBot);
+  }
+
+  // 3. 核心黑魔法：劫持全局原生 fetch
+  const originalFetch = window.fetch;
+  window.fetch = async function (input, init) {
+    let url = typeof input === 'string' ? input : input.url;
+    const savedBot = sessionStorage.getItem('kongjing_entrance_bot');
+
+    // 4. 只要是发往你后端的接口（包含 /api/ 或者是相对路径 /user/...）
+    if (savedBot && (url.includes('/api/') || url.startsWith('/'))) {
+      try {
+        const urlObj = new URL(url, window.location.origin);
+        // 如果当前请求没有带 entrance_bot 参数，自动帮它补上
+        if (!urlObj.searchParams.has('entrance_bot')) {
+          urlObj.searchParams.set('entrance_bot', savedBot);
+        }
+        
+        // 把修改后的 URL 重新写回输入参数
+        if (typeof input === 'string') {
+          input = urlObj.toString();
+        } else {
+          input = new Request(urlObj.toString(), input);
+        }
+      } catch (e) {
+        console.error("【空境前端网关】URL 解析注入异常:", e);
+      }
+    }
+    // 执行原生的 fetch
+    return originalFetch(input, init);
+  };
+}
+
 // ==========================================================================
 // 后端配置中心
 // ==========================================================================

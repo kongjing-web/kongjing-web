@@ -984,125 +984,109 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> Optional[dict]:
 async def get_current_tg_user(
     request: Request,
     authorization: Optional[str] = Header(None),
-    entrance_bot: Optional[str] = Query(None) # 🛰️ 接收前端传来的浏览器实际宿主 ?entrance_bot=xxx
+    entrance_bot: Optional[str] = Query(None)
 ):
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="未登录或凭证不完整")
-    
+        raise HTTPException(status_code=401, detail="未登录")
+
     init_data = authorization.split(" ")[1]
-    
-    # 🧼 清洗入口 Bot 名字
-    clean_entrance = (entrance_bot or "").replace("@", "").strip().lower()
-    
-    if not clean_entrance:
-        # 💡【自适应感知降级】：如果前端由于跨端或首次进门未传当前入口参数，
-        # 自动调用系统函数自适应拉取并补全为【公共母舰】的用户名，确保全网对账链条不脱节！
-        clean_entrance = get_global_bot_username().lower()
-    
-    # =========================================================================
-    # Step 1. 💡 【无感盲解析】：不校验签名，先强行剥离出全网唯一的 Telegram ID
-    # =========================================================================
-    tg_id = None
+
+    # 1️⃣ 解析 tg_id（先解析，不做任何信任）
     try:
-        parsed_data = dict(parse_qsl(init_data))
-        user_data_str = parsed_data.get("user")
-        if user_data_str:
-            tg_id = str(json.loads(user_data_str).get("id", ""))
+        parsed = dict(parse_qsl(init_data))
+        user_obj = json.loads(parsed.get("user", "{}"))
+        tg_id = str(user_obj.get("id"))
+        username = user_obj.get("username", "")
     except Exception:
-        raise HTTPException(status_code=403, detail="无法解析 Telegram 身份指纹")
-        
+        raise HTTPException(status_code=403, detail="initData解析失败")
+
     if not tg_id:
-        raise HTTPException(status_code=403, detail="Telegram 用户数据载荷缺失")
+        raise HTTPException(status_code=403, detail="缺少telegram_id")
 
-    # =========================================================================
-    # Step 2. 🗄️ 全局对账准备：去中央数据库捞取两端（用户端、入口端）的 Token 凭证
-    # =========================================================================
-    user_bot_token = None
+    # 2️⃣ 获取入口 bot（只用于验签，不参与业务）
+    clean_bot = (entrance_bot or "").replace("@", "").strip().lower()
+
+    # 载入主舰配置（从 .env 读取）
+    MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")
+    # 主舰的 username 也可以写进 .env，或者在这里硬编码默认值
+    MAIN_BOT_USERNAME = os.getenv("MAIN_BOT_USERNAME", "kongjing_service_bot").lower()
+
+    # 3️⃣ 获取验签所需的 bot_token
     entrance_bot_token = None
-    user_row = None
-    
-    with get_db_connection() as (conn, cursor):
-        # A. 查当前访问者在中央底座中是否已有档案
-        cursor.execute(
-            "SELECT telegram_id, username, role, vip_until, bot_token, bot_username FROM users WHERE telegram_id = %s",
-            (tg_id,)
-        )
-        user_row = cursor.fetchone()
-        if user_row:
-            user_bot_token = user_row[4] # 用户自己历史绑定的专属租户 Token
+
+    # 🌟 核心修改：如果是空，或者传入的名字对上了主舰 Bot，就直接走 .env 配置
+    if not clean_bot or clean_bot == MAIN_BOT_USERNAME:
+        entrance_bot_token = MAIN_BOT_TOKEN
+        clean_bot = MAIN_BOT_USERNAME  # 统一规范名称
+        
+        if not entrance_bot_token:
+            raise HTTPException(500, detail="服务器未配置主舰Bot Token (BOT_TOKEN)")
             
-        # B. 查当前正在点开的这个宿主 Bot，系统里有没有对应的租户进行过 Token 归档
-        if clean_entrance:
-            cursor.execute(
-                "SELECT bot_token FROM users WHERE LOWER(bot_username) = %s LIMIT 1",
-                (clean_entrance,)
-            )
-            bot_row = cursor.fetchone()
-            if bot_row:
-                entrance_bot_token = bot_row[0] # 当前入口租户的 Token
-
-    # =========================================================================
-    # Step 3. 🔍 【多策略对账】：盲喂验证函数，实现全网交叉动态验签
-    # =========================================================================
-    user_payload = None
-    
-    # 🌟 策略 A：如果当前入口 Bot 在系统里有归档，优先用入口 Token 去校准签名（漫游场景的核心）
-    if entrance_bot_token:
-        user_payload = verify_telegram_init_data(init_data, entrance_bot_token)
-        
-    # 🌟 策略 B：如果没有或失败了（比如跨端或缓存抖动），用该用户自己绑定的 Token 去尝试校准
-    if not user_payload and user_bot_token:
-        user_payload = verify_telegram_init_data(init_data, user_bot_token)
-        
-    # 🌟 策略 C：如果依然无解，说明是新小白，或者从母舰进门，直接用系统内置的母舰 BOT_TOKEN 兜底
-    if not user_payload and BOT_TOKEN:
-        user_payload = verify_telegram_init_data(init_data, BOT_TOKEN)
-
-    # =========================================================================
-    # Step 4. ⚖️ 终审裁决与【病毒式静默落库】
-    # =========================================================================
-    if not user_payload:
-        # 三道防火墙全部击穿，说明是未在平台归档过 Token 的非法第三方克隆 Bot，物理斩断！
-        raise HTTPException(
-            status_code=403, 
-            detail="安全验证失败：当前测试 Bot 尚未配置 Token 归档，无法直接进门。请先前往主舰绑定系统。"
-        )
-
-    # 顺利通关：如果中央底座已有该老用户，直接拼装上下文放行
-    if user_row:
-        return {
-            "telegram_id": user_row[0],
-            "username": user_row[1],
-            "role": user_row[2],
-            "vip_until": user_row[3],
-            "bot_token": user_row[4],
-            "bot_username": user_row[5],
-            "current_entrance_bot": clean_entrance
-        }
     else:
-        # 🔥【核心修正：裂变闭环】新用户 D 从租户 B 的 Bot 进门，验签通过的一瞬间，原地执行“静默自动落库”！
-        username = user_payload.get("username", "")
-        with get_db_connection() as (conn, cursor):
-            cursor.execute(
-                """
-                INSERT INTO users (telegram_id, username, role, vip_until, balance, bot_token, bot_username, language)
-                VALUES (%s, %s, 'user', 0, 0, '', '', 'zh')
+        # 情况 B：前端传入的是其他子 Bot 名字，才去数据库查询其动态绑定的 Token
+        with get_db_connection() as (_, cursor):
+            cursor.execute("""
+                SELECT bot_token
+                FROM users
+                WHERE LOWER(bot_username) = %s
+                LIMIT 1
+            """, (clean_bot,))
+            row = cursor.fetchone()
+            if row:
+                entrance_bot_token = row[0]
+
+# ==================== 🛠️ 紧急排查雷达区 ====================
+    print("====== [KONGJING DEBUG START] ======")
+    print(f"👉 1. 前端传过来的原始入口参数: {entrance_bot}")
+    print(f"👉 2. 经过清洗后的入口参数: {clean_bot}")
+    print(f"👉 3. 最终在数据库查到的 Token: {entrance_bot_token[:10] if entrance_bot_token else '⚠️ 完全没查到 (None)！'}")
+    print("====== [KONGJING DEBUG END] ======")
+    # =========================================================    
+
+    # 4️⃣ 🔐 强制验签（唯一标准）
+    if not entrance_bot_token:
+        raise HTTPException(403, detail="该入口未绑定bot_token")
+
+    user_payload = verify_telegram_init_data(init_data, entrance_bot_token)
+
+    if not user_payload:
+        raise HTTPException(403, detail="Telegram签名校验失败")
+
+    # 5️⃣ 查用户（统一身份系统）
+    with get_db_connection() as (_, cursor):
+        cursor.execute("""
+            SELECT telegram_id, username, role, vip_until,
+                   bot_token, bot_username
+            FROM users
+            WHERE telegram_id = %s
+        """, (tg_id,))
+        user_row = cursor.fetchone()
+
+    # 6️⃣ 新用户自动注册（只跟 tg_id 绑定）
+    if not user_row:
+        with get_db_connection() as (_, cursor):
+            cursor.execute("""
+                INSERT INTO users (telegram_id, username, role, vip_until, bot_token, bot_username, language)
+                VALUES (%s, %s, 'user', 0, '', '', 'zh')
                 ON CONFLICT (telegram_id) DO NOTHING
-                """,
-                (tg_id, username)
-            )
-        
-        # 原地激活为合法系统用户，让后续所有查 users 表的业务路由（卡片列表、充值等）永不抛 404
-        return {
-            "telegram_id": tg_id,
-            "username": username,
-            "role": "user",
-            "vip_until": 0,
-            "bot_token": "",
-            "bot_username": "",
-            "current_entrance_bot": clean_entrance,
-            "is_new_user": True
-        }
+            """, (tg_id, username))
+
+        user_row = (tg_id, username, "user", 0, "", "")
+
+    # 7️⃣ 返回统一身份 + 入口上下文
+    return {
+        "telegram_id": user_row[0],
+        "username": user_row[1],
+        "role": user_row[2],
+        "vip_until": user_row[3],
+
+        # 用户资产（未来建议拆表，但你现在可以先用）
+        "bot_token": user_row[4],
+        "bot_username": user_row[5],
+
+        # 入口信息（只做展示/统计）
+        "current_entrance_bot": clean_bot
+    }
 
 @app.get("/user/gate_check")
 async def check_user_bot_gate_status(current_user: dict = Depends(get_current_tg_user)):
