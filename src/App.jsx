@@ -1912,7 +1912,7 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   );
 }
 
-Function SettingsScreen({ currentUser, onBack, onSave }) {
+function SettingsScreen({ currentUser, onBack, onSave }) {
   const { t, i18n } = useTranslation();
   const [localGate, setLocalGate] = useState(null);
 
