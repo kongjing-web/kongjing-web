@@ -1912,10 +1912,8 @@ function RechargeScreen({ currentUser, onBack, onRefreshUser }) {
   );
 }
 
-function SettingsScreen({ currentUser, onBack, onSave }) {
-  // 👈 1. 引入官方多语言 Hook 实例
+Function SettingsScreen({ currentUser, onBack, onSave }) {
   const { t, i18n } = useTranslation();
-// 🛡️ 联动新增：设置页独立拉取内联开通指标
   const [localGate, setLocalGate] = useState(null);
 
   useEffect(() => {
@@ -1943,10 +1941,9 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
   }, []);  
 
   const [botToken, setBotToken] = useState(currentUser?.bot_token || '');
-  const [language, setLanguage] = useState(currentUser?.language || 'en'); // 👈 默认强制初始化为 en
+  const [language, setLanguage] = useState(currentUser?.language || 'en'); 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
-
 
   const handleSave = async () => {
       if (!currentUser?.id) {
@@ -1963,7 +1960,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
           headers: getAuthHeaders('application/json'),
           body: JSON.stringify({
             user_id: currentUser.id,
-            language // 'zh' 或 'en'
+            language
           }),
         });
         
@@ -1971,10 +1968,8 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
           throw new Error('通用基础设置同步失败');
         }
         
-        // 让本地多语言实例立刻强制生效
         i18n.changeLanguage(language);
 
-        // 用于存储准备回传给上层 state 的最终合并用户信息
         let updatedUserResult = {
           ...currentUser,
           language
@@ -1982,7 +1977,6 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
 
         // ===== 事务二：智能判断并联调核心一键 Bot 托管绑定接口 =====
         if (botToken.trim()) {
-          // 只要输入了 Token，所有人都可以直接绑定
           const bindResponse = await fetch(`${BASE_URL}/bot/bind`, {
             method: 'POST',
             headers: getAuthHeaders('application/json'),
@@ -2001,7 +1995,6 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
           updatedUserResult.bot_username = bindData.bot_username;
           
         } else if (currentUser?.bot_token && !botToken.trim()) {
-          // 如果用户原来绑定过 Bot，现在清空了输入框，说明想解绑
           const unbindResponse = await fetch(`${BASE_URL}/user/update_settings`, {
             method: 'POST',
             headers: getAuthHeaders('application/json'),
@@ -2012,7 +2005,6 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
             updatedUserResult = unbindData;
           }
         } else {
-          // 如果本来就没绑定 Bot，只是单纯修改语言
           const langData = await langResponse.json().catch(() => ({}));
           if (langData.telegram_id) updatedUserResult = langData;
         }
@@ -2020,7 +2012,6 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
         // ===== 事务三：成功闭环与上层状态回传 =====
         setMessage(t('common_success'));
         
-        // 执行原本的传值回调，将最新附带 bot_username 属性的 user 字典同步更新给全局
         if (onSave) {
           onSave(updatedUserResult);
         }
@@ -2052,16 +2043,14 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
                 type="text"
                 value={botToken}
                 onChange={(e) => setBotToken(e.target.value)}
-                disabled={botInputDisabled}
-                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100"
+                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400"
                 placeholder={t('settings_bot_token_placeholder')}
               />
-
               {currentUser?.bot_username && (
                 <p className="mt-2 text-xs text-slate-500">{t('settings_current_bot')}{currentUser.bot_username}</p >
               )}
             </div>
-  {/* ⚡ 联动固化长驻组件：如果已绑定但没有开通内联，显示快捷去开通看板 */}
+
             {localGate && localGate.is_bound === true && localGate.is_inline_enabled === false && (
               <div className="mt-4 rounded-2xl bg-indigo-50/50 border border-indigo-100/60 p-4 animate-in fade-in duration-300">
                 <div className="flex items-center gap-2 text-indigo-950 font-black text-xs">
