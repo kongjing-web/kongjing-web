@@ -1947,8 +1947,6 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
 
-  const isVip = currentUser?.role === 'superuser' || (currentUser?.vip_until && Number(currentUser.vip_until) > Math.floor(Date.now() / 1000));
-  const botInputDisabled = !isVip;
 
   const handleSave = async () => {
       if (!currentUser?.id) {
@@ -1983,8 +1981,8 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
         };
 
         // ===== 事务二：智能判断并联调核心一键 Bot 托管绑定接口 =====
-        // 如果用户有 VIP/高级 权限，并且输入了 Bot Token
-        if (!botInputDisabled && botToken.trim()) {
+        if (botToken.trim()) {
+          // 只要输入了 Token，所有人都可以直接绑定
           const bindResponse = await fetch(`${BASE_URL}/bot/bind`, {
             method: 'POST',
             headers: getAuthHeaders('application/json'),
@@ -1996,16 +1994,14 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
           const bindData = await bindResponse.json().catch(() => ({}));
 
           if (!bindResponse.ok) {
-            // 如果后端抛出了 400/502 等预检错误，直接将 HTTPException 里的 detail 细节展示给用户
             throw new Error(bindData.detail || '专属 Bot 托管下发失败，请核对 Token');
           }
 
-          // 绑定成功：捕获后端一键脚本返回的真实 bot_username
           updatedUserResult.bot_token = botToken.trim();
           updatedUserResult.bot_username = bindData.bot_username;
           
-        } else if (!botInputDisabled && !botToken.trim()) {
-          // 兜底：如果用户删除了 Token，说明想解绑，传入空字符串重置
+        } else if (currentUser?.bot_token && !botToken.trim()) {
+          // 如果用户原来绑定过 Bot，现在清空了输入框，说明想解绑
           const unbindResponse = await fetch(`${BASE_URL}/user/update_settings`, {
             method: 'POST',
             headers: getAuthHeaders('application/json'),
@@ -2016,7 +2012,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
             updatedUserResult = unbindData;
           }
         } else {
-          // 如果只是普通用户修改语言，直接用修改语言接口返回的最新行数据
+          // 如果本来就没绑定 Bot，只是单纯修改语言
           const langData = await langResponse.json().catch(() => ({}));
           if (langData.telegram_id) updatedUserResult = langData;
         }
@@ -2060,9 +2056,7 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
                 className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100"
                 placeholder={t('settings_bot_token_placeholder')}
               />
-              {!isVip && (
-                <p className="mt-2 text-xs text-red-500">{t('settings_vip_only_bot')}</p >
-              )}
+
               {currentUser?.bot_username && (
                 <p className="mt-2 text-xs text-slate-500">{t('settings_current_bot')}{currentUser.bot_username}</p >
               )}
