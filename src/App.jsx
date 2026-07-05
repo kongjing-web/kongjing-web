@@ -1292,7 +1292,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     }
   };  
 
-// ==========================================================================
+  // ==========================================================================
   // 🛡️ 链式状态机流水线拦截处理器 (全阶段支持右上角 X 软关闭模式)
   // ==========================================================================
   let gateOverlay = null;
@@ -1305,9 +1305,9 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       gateOverlay = (
         <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
           <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
-            {/* 右上角允许软关闭 */}
+            {/* 右上角允许软关闭 - ⚡ 已修正 onClick */}
             <button 
-              onClick={() => handleDismissGate} 
+              onClick={handleDismissGate} 
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
             >
               <FaTimes size={14} />
@@ -1338,9 +1338,9 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       gateOverlay = (
         <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
           <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
-            {/* 右上角允许软关闭 */}
+            {/* 右上角允许软关闭 - ⚡ 已修正 onClick */}
             <button 
-              onClick={() => handleDismissGate} 
+              onClick={handleDismissGate} 
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
             >
               <FaTimes size={14} />
@@ -1355,22 +1355,16 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             <div className="mt-3 p-2 bg-slate-50 rounded-xl border border-gray-100 text-[10px] text-gray-500 space-y-1">
               <p className="font-bold text-gray-700">💡 开通指南（只需10秒）：</p >
               <p>1. 私聊官方机器人 <span className="font-bold text-indigo-600">@BotFather</span></p >
-              <p>2.  进入对话框后，**直接发送**或**长按粘贴**指令（指令自动复制）：<span className="font-mono bg-white px-1 border border-gray-200 rounded">/setinline</span></p >
+              <p>2. 进入对话框后，页面输入框通常已**自动预填**，或直接**长按粘贴**发送指令：<span className="font-mono bg-white px-1 border border-gray-200 rounded">/setinline</span></p >
               <p>3. 选择您绑定的 Bot：<span className="font-mono">@{gateData.bound_bot_username}</span></p >
               <p>4. 输入任意占位符提示词（例如：<span className="text-gray-400">搜索我的空境卡片...</span>）即大功告成！</p >
             </div>
+            {/* ⚡ 已将 onClick 彻底换绑到高级自适应跳转函数上 */}
             <button 
-              onClick={() => {
-                const fatherUrl = `https://t.me/BotFather`;
-                if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-                  window.Telegram.WebApp.openTelegramLink(fatherUrl);
-                } else {
-                  window.open(fatherUrl, '_blank');
-                }
-              }} 
+              onClick={handleGoToBotFather} 
               className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-md shadow-indigo-100 transition-all flex items-center justify-center gap-1.5"
             >
-              打开 @BotFather 去开通
+              打开 @BotFather 去开通 
             </button>
           </div>
         </div>
@@ -1378,7 +1372,6 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     }
 
     // 🔥 【三阶弹窗】：防伪入口不匹配拦截 (current_entrance_bot != bound_bot_username)
-    // ✨【已改装】：同样提供关闭按钮，允许点击关闭看一眼首页数据资产，绝不卡死用户
     else if (gateData.is_bound === true && gateData.is_inline_enabled === true) {
       const entrance = cleanBotName(gateData.current_entrance_bot);
       const bound = cleanBotName(gateData.bound_bot_username);
@@ -1387,15 +1380,13 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
         gateOverlay = (
           <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
             <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-200 p-6 shadow-2xl text-center relative animate-in zoom-in-95 duration-200">
-              
-              {/* ✨ 极其关键的改动：赋予用户关闭并浏览首页的自由 */}
+              {/* 右上角允许软关闭 - ⚡ 已修正 onClick */}
               <button 
-                onClick={() => handleDismissGate} 
+                onClick={handleDismissGate} 
                 className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
               >
                 <FaTimes size={14} />
               </button>
-
               <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 mx-auto mb-4">
                 <FaExternalLinkAlt size={18} />
               </div>
@@ -1406,11 +1397,9 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
               <p className="text-[11px] text-indigo-600 mt-2 font-semibold leading-relaxed px-1">
                 您的资产和卡片完全安全（目前处于全功能阅览状态）。但由于 Telegram 内联隔离机制，如需“去发布/新签发”卡片，请通过您的专属底座进入。
               </p >
-
               <div className="my-4 py-1.5 px-3 bg-indigo-50/60 rounded-xl border border-indigo-100/40 inline-block">
                 <span className="text-xs font-black text-indigo-950">@{gateData.bound_bot_username}</span>
               </div>
-
               <button 
                 onClick={() => {
                   const targetBotUrl = `https://t.me/${cleanBotName(gateData.bound_bot_username)}`;
