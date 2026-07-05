@@ -19,7 +19,7 @@ from functools import partial
 from typing import List, Optional, Union, Any
 from urllib.parse import quote_plus, parse_qsl
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header, Depends, Body, BackgroundTasks, Header, Query
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header, Depends, Body, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -30,9 +30,7 @@ from psycopg2.pool import ThreadedConnectionPool
 from telegram_formatter import sanitize_for_telegram, truncate_caption, smart_clean_inline_keyboard
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-import redis
-from datetime import datetime
-import requests
+
 
 load_dotenv() 
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心") 
@@ -51,18 +49,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 ) 
-
-# ==========================================
-# 🔌 Redis & 客服核心常量配置 (直接扔在文件头部或配置区)
-# ==========================================
-REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
-r_cache = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True)
-
-SUPPORT_BOT_TOKEN = "8826811203:AAG-tjP_Djr8Ji7UcdEv8Iui_zmXURWtfWI"
-SUPPORT_GROUP_ID = -1004491807478
-TICKET_TTL = 5 * 24 * 3600  # ⏳ 工单生命周期：5天自动过期
 
 # 🔐 从环境变量中读取系统主（内置）Bot Token
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
@@ -508,10 +494,9 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "video_file_id": tg_file_id_str, 
                     "title": title or "精美可视化视频卡片",
-                    "description": short_description,  
+                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
                     "caption": caption,
-                    "parse_mode": "HTML",
-                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭视频网页预览
+                    "parse_mode": "HTML"
                 }
             elif norm_media == "gif":
                 inline_result = {
@@ -519,10 +504,9 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "gif_file_id": tg_file_id_str,   
                     "title": title or "精美动态卡片",
-                    "description": short_description,  
+                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
                     "caption": caption,
-                    "parse_mode": "HTML",
-                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭GIF网页预览
+                    "parse_mode": "HTML"
                 }
             else:
                 inline_result = {
@@ -530,10 +514,9 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "photo_file_id": tg_file_id_str, 
                     "title": title or "精美可视化卡片",
-                    "description": short_description,  
+                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
                     "caption": caption,
-                    "parse_mode": "HTML",
-                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭图片网页预览
+                    "parse_mode": "HTML"
                 }
         else:
             # 🔄 纯净退路：针对历史遗留无 file_id 的卡片，无缝降级回绝对 URL 爬取模式
@@ -542,12 +525,11 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                 "type": "photo",
                 "id": result_id,
                 "title": title or "精美可视化卡片",
-                "description": short_description,      
+                "description": short_description,      # 🌟 修复：降级模式下也必须注入纯文本预览
                 "photo_url": img,
                 "thumb_url": img,
                 "caption": caption,
-                "parse_mode": "HTML",
-                "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭降级图片网页预览
+                "parse_mode": "HTML"
             } 
     else:
         # 文本卡片保持原本的 article 逻辑
@@ -555,13 +537,12 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
             "type": "article",
             "id": result_id,
             "title": title or "精美可视化卡片",
-            "description": short_description,          
+            "description": short_description,          # 🌟 统一使用提取好的无标签干净摘要
             "input_message_content": {
                 "message_text": caption,
-                "parse_mode": "HTML",
-                "link_preview_options": {"is_disabled": True}  # 💡 ⚠️注意：纯文本卡片参数必须写在 input_message_content 内部！
+                "parse_mode": "HTML"
             }
-        }
+        } 
 
     if reply_markup:
         inline_result["reply_markup"] = reply_markup 
@@ -603,32 +584,10 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
         print("[网络通信发信故障]:", e)
 
     
+init_db() 
 
 # 1. 初始化数据库表结构
 init_db() 
-
-# ==========================================
-# ⚓ 客服 Bot Webhook 自动注册 (放在 app 启动事件里调用)
-# ==========================================
-def auto_align_support_bot_webhook(api_base_url: str):
-    if not SUPPORT_BOT_TOKEN:
-        print("⚠️ [客服自检] 未检测到 SUPPORT_BOT_TOKEN，客服网关无法初始化！")
-        return
-    
-    support_webhook_url = f"{api_base_url.rstrip('/')}/tg/support_webhook"
-    print(f"⚓ [客服自检] 正在自动注册客服专线公网网关: {support_webhook_url} ...")
-    try:
-        res = requests.post(
-            f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/setWebhook",
-            json={"url": support_webhook_url, "allowed_updates": ["message"]},
-            timeout=5
-        )
-        if res.ok:
-            print(f"🟢 [客服自愈成功] 客服 Bot Webhook 全自动对齐！")
-        else:
-            print(f"❌ [客服自愈失败] TG 拒绝了网关注册: {res.text}")
-    except Exception as e:
-        print(f"❌ [客服自愈异常] 客服 Bot 注册超时: {e}")
 
 # 2. ⚓ 【主母舰系统自动化中心】服务器启动时，自动把主 Bot 的 Webhook 牢牢锚定，彻底告别浏览器手动访问！
 def auto_align_master_bot_webhook():
@@ -659,154 +618,6 @@ def auto_align_master_bot_webhook():
 
 # 顺轨执行主舰自愈（这里开启一个线程或者直接执行，由于是启动时执行一次，直接执行即可）
 auto_align_master_bot_webhook()
-auto_align_support_bot_webhook(API_BASE_URL)
-
-# ==========================================
-# 🗃️ 辅助函数：抓取数据库用户状态（直接用你原文件里的 get_db_connection）
-# ==========================================
-def _get_user_financial_and_vip_status(user_id: str) -> dict:
-    # 这里直接盲挂你现有的 get_db_connection，因为在一个文件里，随便调用
-    with get_db_connection() as (conn, cursor):
-        cursor.execute(
-            "SELECT username, role, vip_until, balance FROM users WHERE telegram_id = %s",
-            (str(user_id),)
-        )
-        row = cursor.fetchone()
-        if row:
-            username, role, vip_until, balance = row
-            is_vip = vip_until > int(time.time())
-            vip_text = f"👑 VIP 会员 (⏳ 至 {datetime.fromtimestamp(vip_until).strftime('%Y-%m-%d')})" if is_vip else "👤 普通用户"
-            return {
-                "username": f"@{username}" if username else "未设置",
-                "identity": vip_text,
-                "balance": f"{balance:.2f} USDT",
-                "role": role
-            }
-        return {"username": "全新用户", "identity": "👤 普通用户", "balance": "0.00 USDT", "role": "user"}
-
-
-# ==========================================
-# 🏁 核心网关：客服专属双向流量路由
-# ==========================================
-@app.post("/tg/support_webhook")
-async def telegram_support_webhook_router(request: Request, background_tasks: BackgroundTasks):
-    try:
-        update_data = await request.json()
-        message = update_data.get("message")
-        if not message:
-            return {"status": "success"}
-
-        chat_id = message["chat"]["id"]
-        chat_type = message["chat"]["type"]
-
-        # ----------------------------------------------------------------------
-        # 🚀 模式 A：用户发送私聊给客服 Bot -> 同步/创建群组 Topic 话题
-        # ----------------------------------------------------------------------
-        if chat_type == "private":
-            user_id = str(chat_id)
-            text_content = message.get("text", "")
-
-            # 过滤或首句欢迎词响应
-            if text_content.startswith("/start"):
-                welcome_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
-                await run_in_threadpool(requests.post, welcome_url, json={
-                    "chat_id": user_id,
-                    "text": "🌌 *空境系统 · 客服中心*\n\n您好！请直接在此处发送您遇到的问题或合作意向，技术团队将直接通过此窗口与您对话。",
-                    "parse_mode": "Markdown"
-                }, timeout=3)
-                return {"status": "success"}
-
-            # 1. 检索 Redis 缓存层关系
-            topic_id = r_cache.get(f"support_topic:{user_id}")
-
-            # 2. 缓存未命中 -> 开辟【新工单话题】
-            if not topic_id:
-                user_info = _get_user_financial_and_vip_status(user_id)
-                raw_first_name = message["from"].get("first_name", "User")
-                # 🔥【核心修正】：防止昵称包含 < > & 导致 TG 官方 HTML 解析引擎崩溃
-                clean_first_name = sanitize_for_telegram(raw_first_name)
-                
-                # A. 创建论坛话题
-                create_topic_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/createForumTopic"
-                topic_res = await run_in_threadpool(requests.post, create_topic_url, json={
-                    "chat_id": SUPPORT_GROUP_ID,
-                    "name": f"{raw_first_name} | ID: {user_id}"  # 标题不支持 HTML 标签，直接用原名
-                }, timeout=5)
-                
-                if not topic_res.ok:
-                    print(f"❌ [客服创建工单失败]: {topic_res.text}")
-                    return {"status": "error"}
-                
-                topic_id = str(topic_res.json()["result"]["message_thread_id"])
-
-                # B. 双向路由灌入 Redis
-                r_cache.setex(f"support_topic:{user_id}", TICKET_TTL, topic_id)
-                r_cache.setex(f"support_user:{topic_id}", TICKET_TTL, user_id)
-
-                # C. 渲染发送工业黑金极简风的【用户信息置顶卡片】
-                card_html = (
-                    f"<b>🎴 【空境工单系统 · 用户置顶卡片】</b>\n"
-                    f"<code>───────────────────</code>\n"
-                    f"👤 <b>用户昵称:</b> {clean_first_name}\n"  # 👈 使用了清洗后的安全昵称
-                    f"🆔 <b>用户 ID:</b> <code>{user_id}</code>\n"
-                    f"🏷️ <b>平台账号:</b> {user_info['username']}\n"
-                    f"💎 <b>账户身份:</b> {user_info['identity']}\n"
-                    f"💰 <b>账户余额:</b> <code>{user_info['balance']}</code>\n"
-                    f"<code>───────────────────</code>\n"
-                    f"💡 <i>提示：在此话题内直接回复，内容将全自动同步回该用户私聊。</i>"
-                )
-                
-                send_card_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
-                await run_in_threadpool(requests.post, send_card_url, json={
-                    "chat_id": SUPPORT_GROUP_ID,
-                    "message_thread_id": int(topic_id),
-                    "text": card_html,
-                    "parse_mode": "HTML"
-                }, timeout=3)
-
-            # 3. 将用户消息完美 Copy 投递至指定 Topic 话题中
-            copy_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/copyMessage"
-            await run_in_threadpool(requests.post, copy_url, json={
-                "chat_id": SUPPORT_GROUP_ID,
-                "from_chat_id": user_id,
-                "message_id": message["message_id"],
-                "message_thread_id": int(topic_id)
-            }, timeout=3)
-
-            # 4. 活跃对话自适应续期
-            r_cache.expire(f"support_topic:{user_id}", TICKET_TTL)
-            r_cache.expire(f"support_user:{topic_id}", TICKET_TTL)
-
-        # ----------------------------------------------------------------------
-        # 👑 模式 B：客服团队在私密群 Topic 话题中回复 -> 双向透传回用户私聊
-        # ----------------------------------------------------------------------
-        elif chat_id == SUPPORT_GROUP_ID and "message_thread_id" in message:
-            # 🚨 拦截内鬼：如果是机器人自己投递的消息，直接忽略，防止自循环死复读
-            if message.get("from", {}).get("is_bot"):
-                return {"status": "success"}
-
-            topic_id = str(message["message_thread_id"])
-            
-            # 1. 检索该话题对应的真实用户
-            target_user_id = r_cache.get(f"support_user:{topic_id}")
-            if target_user_id:
-                # 2. 将客服的回复精准 Copy 传递回用户私聊中
-                copy_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/copyMessage"
-                await run_in_threadpool(requests.post, copy_url, json={
-                    "chat_id": int(target_user_id),
-                    "from_chat_id": SUPPORT_GROUP_ID,
-                    "message_id": message["message_id"]
-                }, timeout=3)
-
-                # 3. 活跃回复同样触发路由续期
-                r_cache.expire(f"support_topic:{target_user_id}", TICKET_TTL)
-                r_cache.expire(f"support_user:{topic_id}", TICKET_TTL)
-
-        return {"status": "success"}
-
-    except Exception as e:
-        print(f"[客服网关严重异常]: {str(e)}")
-        return {"status": "error", "message": str(e)}
 
 # ==========================================
 # 💰 智能计价与后台调控中心（统一集权于内置主Bot）
@@ -982,149 +793,132 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> Optional[dict]:
         return None 
 
 async def get_current_tg_user(
-    request: Request,
     authorization: Optional[str] = Header(None),
-    entrance_bot: Optional[str] = Query(None)
-):
+    x_entrance_bot: Optional[str] = Header(None)  # 👈 核心注入：前端请求头带入当前网址中的 ?bot=bot_username
+) -> dict:
+    """
+    【2.0 中央底座自适应网关】
+    不论用户从哪个 Bot 入口进来，统一逆解身份，根据入口管道动态校验真值，
+    完美实现“认人不认入口”的全局共享账号体系，并支持新用户任意入口静默注册。
+    """
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="未登录")
-
-    init_data = authorization.split(" ")[1]
-
-    # 1️⃣ 解析 tg_id（先解析，不做任何信任）
+        raise HTTPException(status_code=401, detail="请重新从 Telegram 打开小程序以完成登录授权")
+    
+    init_data = authorization.split(" ", 1)[1] 
+    
+    # =====================================================================
+    # STEP 1. 🔍 初步逆解：提取数据体内的明文属性（此时尚未信任）以定位用户 TG_ID
+    # =====================================================================
     try:
-        parsed = dict(parse_qsl(init_data))
-        user_obj = json.loads(parsed.get("user", "{}"))
-        tg_id = str(user_obj.get("id"))
-        username = user_obj.get("username", "")
+        parsed_data = dict(parse_qsl(init_data))
+        user_data_str = parsed_data.get("user", "{}")
+        user_info_raw = json.loads(user_data_str)
+        telegram_id = str(user_info_raw.get("id") or "").strip()
     except Exception:
-        raise HTTPException(status_code=403, detail="initData解析失败")
+        raise HTTPException(status_code=403, detail="授权身份数据片段严重残缺")
+       
+    if not telegram_id:
+        raise HTTPException(status_code=403, detail="身份数据不完整")
 
-    if not tg_id:
-        raise HTTPException(status_code=403, detail="缺少telegram_id")
-
-    # 2️⃣ 获取入口 bot（只用于验签，不参与业务）
-    clean_bot = (entrance_bot or "").replace("@", "").strip().lower()
-
-    # 载入主舰配置（从 .env 读取）
-    MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")
-    # 主舰的 username 也可以写进 .env，或者在这里硬编码默认值
-    MAIN_BOT_USERNAME = os.getenv("MAIN_BOT_USERNAME", "kongjing_service_bot").lower()
-
-    # 3️⃣ 获取验签所需的 bot_token
-    entrance_bot_token = None
-
-    # 🌟 核心修改：如果是空，或者传入的名字对上了主舰 Bot，就直接走 .env 配置
-    if not clean_bot or clean_bot == MAIN_BOT_USERNAME:
-        entrance_bot_token = MAIN_BOT_TOKEN
-        clean_bot = MAIN_BOT_USERNAME  # 统一规范名称
-        
-        if not entrance_bot_token:
-            raise HTTPException(500, detail="服务器未配置主舰Bot Token (BOT_TOKEN)")
-            
-    else:
-        # 情况 B：前端传入的是其他子 Bot 名字，才去数据库查询其动态绑定的 Token
+    # =====================================================================
+    # STEP 2. 🗺️ 路由反查：根据前端告知的流量入口，精准调拨对应的加密密钥 (Token)
+    # =====================================================================
+    target_bot_token = None
+    entrance_bot = x_entrance_bot.strip() if x_entrance_bot else ""
+    MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")  # 系统内置母舰 Token
+    
+    if entrance_bot:
         with get_db_connection() as (_, cursor):
-            cursor.execute("""
-                SELECT bot_token
-                FROM users
-                WHERE LOWER(bot_username) = %s
-                LIMIT 1
-            """, (clean_bot,))
+            # 在全网用户资产中，反查是谁绑定了这个 bot_username，从而提取出它的合法 token
+            cursor.execute("SELECT bot_token FROM users WHERE bot_username = %s", (entrance_bot,))
             row = cursor.fetchone()
-            if row:
-                entrance_bot_token = row[0]
-
-# ==================== 🛠️ 紧急排查雷达区 ====================
-    print("====== [KONGJING DEBUG START] ======")
-    print(f"👉 1. 前端传过来的原始入口参数: {entrance_bot}")
-    print(f"👉 2. 经过清洗后的入口参数: {clean_bot}")
-    print(f"👉 3. 最终在数据库查到的 Token: {entrance_bot_token[:10] if entrance_bot_token else '⚠️ 完全没查到 (None)！'}")
-    print("====== [KONGJING DEBUG END] ======")
-    # =========================================================    
-
-    # 4️⃣ 🔐 强制验签（唯一标准）
-    if not entrance_bot_token:
-        raise HTTPException(403, detail="该入口未绑定bot_token")
-
-    user_payload = verify_telegram_init_data(init_data, entrance_bot_token)
-
-    if not user_payload:
-        raise HTTPException(403, detail="Telegram签名校验失败")
-
-    # 5️⃣ 查用户（统一身份系统）
-    with get_db_connection() as (_, cursor):
-        cursor.execute("""
-            SELECT telegram_id, username, role, vip_until,
-                   bot_token, bot_username
-            FROM users
-            WHERE telegram_id = %s
-        """, (tg_id,))
-        user_row = cursor.fetchone()
-
-    # 6️⃣ 新用户自动注册（只跟 tg_id 绑定）
-    if not user_row:
-        with get_db_connection() as (_, cursor):
-            cursor.execute("""
-                INSERT INTO users (telegram_id, username, role, vip_until, bot_token, bot_username, language)
-                VALUES (%s, %s, 'user', 0, '', '', 'zh')
-                ON CONFLICT (telegram_id) DO NOTHING
-            """, (tg_id, username))
-
-        user_row = (tg_id, username, "user", 0, "", "")
-
-    # 7️⃣ 返回统一身份 + 入口上下文
-    return {
-        "telegram_id": user_row[0],
-        "username": user_row[1],
-        "role": user_row[2],
-        "vip_until": user_row[3],
-
-        # 用户资产（未来建议拆表，但你现在可以先用）
-        "bot_token": user_row[4],
-        "bot_username": user_row[5],
-
-        # 入口信息（只做展示/统计）
-        "current_entrance_bot": clean_bot
-    }
-
-@app.get("/user/gate_check")
-async def check_user_bot_gate_status(current_user: dict = Depends(get_current_tg_user)):
-    """
-    【纯净中央数字底座听诊网关】
-    后端绝不包含任何硬编码的文案或业务级卡死阻断逻辑。
-    只输出 4 个精确反映客观技术指标的黄金数据，判决与展示全权下放到前端状态机。
-    """
-    bot_token = current_user.get("bot_token", "").strip()
-    bot_username = current_user.get("bot_username", "").strip()
-    entrance_bot = current_user.get("current_entrance_bot", "").strip()
+            if row and row[0]:
+                target_bot_token = row[0].strip()
     
-    # 指标 1：用户本身是否绑定了任何专属 Bot
-    is_bound = bool(bot_token and bot_username)
+    # 兜底策略：如果前端没传后缀，或者数据库里查不到这个 Bot（可能是刚解绑或主舰），直接用母舰 Token 校验
+    if not target_bot_token:
+        target_bot_token = MAIN_BOT_TOKEN
+
+    # =====================================================================
+    # STEP 3. 🛡️ 真实性校验：利用定位到的 Token 压榨出 Telegram 官方签名真值
+    # =====================================================================
+    user_info = verify_telegram_init_data(init_data, target_bot_token)
     
-    # 指标 2：该绑定的 Bot 是否已经开通了 Telegram 官方的 Inline (内联) 分享模式
-    is_inline_enabled = False
-    if is_bound:
-        try:
-            # 🔍 实时连线 TG 官方总线嗅探 getMe 指标
-            res = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=3)
-            if res.ok:
-                bot_info = res.json().get("result", {})
-                # supports_inline_queries 为 TG 官方返回的是否在 BotFather 开启了内联的硬真值标记
-                is_inline_enabled = bool(bot_info.get("supports_inline_queries", False))
-        except Exception as e:
-            print(f"[中央网关提示] 预检自定义 Bot 官方内联状态产生网络抖动: {e}")
-            is_inline_enabled = False # 超时或网络异常时优雅降级，不卡死用户体验
+    # 极其强壮的防御性容错：如果用子 Bot 校验失败，且当前不是用的母舰，尝试用母舰再校验一次
+    # （防止前端页面在边界切换、缓存抖动时导致的鉴权死锁）
+    if not user_info and target_bot_token != MAIN_BOT_TOKEN:
+        user_info = verify_telegram_init_data(init_data, MAIN_BOT_TOKEN)
+        
+    if not user_info:
+        raise HTTPException(status_code=403, detail="身份认证已失效或数据已被非法篡改")
+
+    # =====================================================================
+    # STEP 4. 🗄️ 资产裁决：判定新老用户，老用户直接加载，新用户静默激活落地
+    # =====================================================================
+    with get_db_connection() as (conn, cursor):
+        cursor.execute(
+            "SELECT telegram_id, username, role, vip_until, bot_token, bot_username, language, monthly_published_count, last_reset_month FROM users WHERE telegram_id = %s",
+            (telegram_id,),
+        )
+        row = cursor.fetchone() 
+
+        # 🆕 命中冷数据：纯新用户从任意入口首次闯入
+        if not row:
+            username = str(user_info.get("username") or "").strip()
             
+            # 站长环境变量最高特权卡点拦截
+            admin_super_id = str(os.getenv("ADMIN_SUPER_ID") or "").strip()
+            role = 'superuser' if admin_super_id and telegram_id == admin_super_id else 'user'
+            
+            # 自动化执行母舰底座静默注册
+            cursor.execute("""
+                INSERT INTO users (telegram_id, username, role, vip_until, balance, monthly_published_count, language, bot_token, bot_username)
+                VALUES (%s, %s, %s, 0, 0, 0, 'zh', '', '')
+            """, (telegram_id, username, role))
+            conn.commit()  # 立即提交事务落地
+            
+            print(f"[中央激活] 🎯 新用户 {username}({telegram_id}) 成功通过入口 Bot [@{entrance_bot or '母舰'}] 激活加入数字底座！")
+            
+            return {
+                "id": telegram_id,
+                "telegram_id": telegram_id,
+                "username": username,
+                "role": role,
+                "vip_until": 0,
+                "bot_token": "",
+                "bot_username": "",
+                "language": 'zh',
+                "monthly_published_count": 0,
+                "last_reset_month": '',
+                "current_entrance_bot": entrance_bot  # 动态告知前端本次登录的客观管道
+            }
+
+    # 🧓 命中热数据：老用户平滑归巢（不管他从哪个入口进来，数据全是全局唯一的这一套）
+    role = row[2] or 'user'
+    vip_until = row[3] or 0
+    
+    # 站长最高特权覆盖
+    admin_super_id = str(os.getenv("ADMIN_SUPER_ID") or "").strip()
+    if admin_super_id and str(telegram_id).strip() == admin_super_id:
+        role = 'superuser'
+        
+    # 权限调拨裁决（如是否封禁）
+    perm = get_user_permission({"role": role, "vip_until": vip_until})
+    if perm["is_banned"]:
+        raise HTTPException(status_code=403, detail="您的账号已被封禁，无法继续使用服务")
+      
     return {
-        "code": 200,
-        "status": "success",
-        "data": {
-            "is_bound": is_bound,                  # 📊 1. 用户是否已绑定专属 Bot (True/False)
-            "bound_bot_username": bot_username,    # 📊 2. 用户绑定的专属 Bot 名字 (无则为空字符串)
-            "is_inline_enabled": is_inline_enabled, # 📊 3. 专属 Bot 是否已在官方开通内联 (True/False)
-            "current_entrance_bot": entrance_bot   # 📊 4. 用户当前实际打开小程序的入口 Bot 名字 (自适应补全)
-        }
+        "id": row[0],
+        "telegram_id": row[0],
+        "username": row[1] or str(user_info.get("username") or ""),
+        "role": role,
+        "vip_until": vip_until,
+        "bot_token": row[4] or "",
+        "bot_username": row[5] or "",
+        "language": row[6] or 'zh',
+        "monthly_published_count": row[7] or 0,
+        "last_reset_month": row[8] or '',
+        "current_entrance_bot": entrance_bot  # 完美透传客观入口网关
     }
 
 def get_user_permission(user: dict) -> dict:
@@ -1450,7 +1244,6 @@ def warm_telegram_media_cache(bot_token: str, chat_id: str, media_url: str, medi
         print(f"⚠️ [缓存预热降级] 捕获 file_id 偶发性失败（不影响基础存储事务）: {e}")
     return None
 
-# 🚪 2. 🔥 新增/重构核心对账网关：纯净的“指标数据听诊器”
 
 # -----------------------------
 # 公开统计接口（无鉴权）
@@ -2286,8 +2079,7 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
         tg_file_id_str = str(tg_file_id or "").strip()
         
         payload = {
-            "chat_id": target_chat_id,
-            "link_preview_options": {"is_disabled": True}
+            "chat_id": target_chat_id
         }
         
         if reply_markup and reply_markup.get("inline_keyboard"):

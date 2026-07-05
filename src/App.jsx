@@ -42,20 +42,40 @@ if (typeof window !== 'undefined') {
     // 4. 只要是发往你后端的接口（包含 /api/ 或者是相对路径 /user/...）
     if (savedBot && (url.includes('/api/') || url.startsWith('/'))) {
       try {
+        // --- 🗺️ 轨道 A：保留你原有的 URL 参数注入（双保险） ---
         const urlObj = new URL(url, window.location.origin);
-        // 如果当前请求没有带 entrance_bot 参数，自动帮它补上
         if (!urlObj.searchParams.has('entrance_bot')) {
           urlObj.searchParams.set('entrance_bot', savedBot);
         }
         
-        // 把修改后的 URL 重新写回输入参数
         if (typeof input === 'string') {
           input = urlObj.toString();
         } else {
           input = new Request(urlObj.toString(), input);
         }
+
+        // --- 🚀 轨道 B：核心新增！全自动注入 X-Entrance-Bot 请求头 ---
+        // 确保配置载荷 init 存在
+        init = init || {};
+        
+        // 智能兼容并防爆：判断已有的 headers 类型，动态追加自定义请求头，绝不覆盖老请求头（如 Authorization）
+        if (!init.headers) {
+          init.headers = {};
+        }
+
+        if (init.headers instanceof Headers) {
+          // 如果是标准 Headers 对象
+          init.headers.set('X-Entrance-Bot', savedBot);
+        } else if (Array.isArray(init.headers)) {
+          // 如果是二维数组格式 [ ['Content-Type', 'application/json'] ]
+          init.headers.push(['X-Entrance-Bot', savedBot]);
+        } else {
+          // 如果是最常见的普通键值对对象 { 'Authorization': '...' }
+          init.headers['X-Entrance-Bot'] = savedBot;
+        }
+
       } catch (e) {
-        console.error("【空境前端网关】URL 解析注入异常:", e);
+        console.error("【空境前端网关】URL 或 Headers 解析注入异常:", e);
       }
     }
     // 执行原生的 fetch
@@ -1015,15 +1035,9 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       }
       try {
         const initData = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initData : '';
-        const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
-      
-        // 🛰️ 1. 从 URL 中提取当前宿主 Bot 标识)
-        const currentEntrance = urlParams.get('bot') || '';        
+        const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');      
         
-        // 🚀【核心修正】：将入口参数以 ?entrance_bot=xxx 的形式无缝喂给后端网关
-        const apiUrl = `https://www.kongjing.online/api/user/gate_check?entrance_bot=${encodeURIComponent(currentEntrance)}`;
-        
-        const response = await fetch(apiUrl, {
+        const response = await fetch('https://www.kongjing.online/api/user/gate_check', {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
