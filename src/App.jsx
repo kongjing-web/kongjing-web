@@ -1321,7 +1321,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             </p >
             <button 
               onClick={() => {
-                setIsGateDismissed(true);
+                handleDismissGate();
                 onNavigateSettings(); // 一键跳转到设置页
               }} 
               className="w-full mt-4 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-md shadow-amber-100 transition-all flex items-center justify-center gap-1.5"
