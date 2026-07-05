@@ -1317,7 +1317,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             </div>
             <h3 className="text-sm font-black text-gray-950">升级独立数字底座</h3>
             <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
-              您当前仍在使用公共母舰服务。配置专属私有租户 Bot，可尊享独立的指纹防伪签发、自定义品牌名称以及更高的承载额度。
+              您当前尚未绑定专属 Bot。配置专属私有租户 Bot，可“保存/发布”卡片、自定义品牌名称。
             </p >
             <button 
               onClick={() => {
@@ -1392,10 +1392,10 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
               </div>
               <h3 className="text-sm font-black text-gray-950">安全入口不匹配提示</h3>
               <p className="text-[11px] text-gray-400 mt-2.5 leading-relaxed">
-                您当前正在通过【公共母舰】或其他未授权渠道访问小程序。
+                您当前正在通过其他渠道访问小程序。
               </p >
               <p className="text-[11px] text-indigo-600 mt-2 font-semibold leading-relaxed px-1">
-                您的资产和卡片完全安全（目前处于全功能阅览状态）。但由于 Telegram 内联隔离机制，如需“去发布/新签发”卡片，请通过您的专属底座进入。
+                您目前处于全功能阅览状态。但由于 Telegram 内联隔离机制，如需“保存/发布”卡片，请通过您的专属底座进入。
               </p >
               <div className="my-4 py-1.5 px-3 bg-indigo-50/60 rounded-xl border border-indigo-100/40 inline-block">
                 <span className="text-xs font-black text-indigo-950">@{gateData.bound_bot_username}</span>
