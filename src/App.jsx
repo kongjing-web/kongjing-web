@@ -1002,7 +1002,20 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   // 🛡️ 专属 Bot 状态验证对账网关状态
   const [gateData, setGateData] = useState(null);
   const [isGateLoading, setIsGateLoading] = useState(true);
-  const [isGateDismissed, setIsGateDismissed] = useState(false); 
+  const [isGateDismissed, setIsGateDismissed] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('kongjing_gate_dismissed') === 'true';
+    }
+    return false;
+  }); 
+
+// ⚡ 统一的弹窗关闭与会话锁定处理器
+  const handleDismissGate = () => {
+    setIsGateDismissed(true);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('kongjing_gate_dismissed', 'true');
+    }
+  };  
 
   const longPressTimer = useRef(null);
   const isLongPressTriggered = useRef(false);
@@ -1294,7 +1307,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
             {/* 右上角允许软关闭 */}
             <button 
-              onClick={() => setIsGateDismissed(true)} 
+              onClick={() => handleDismissGate} 
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
             >
               <FaTimes size={14} />
@@ -1327,7 +1340,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
             {/* 右上角允许软关闭 */}
             <button 
-              onClick={() => setIsGateDismissed(true)} 
+              onClick={() => handleDismissGate} 
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
             >
               <FaTimes size={14} />
@@ -1377,7 +1390,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
               
               {/* ✨ 极其关键的改动：赋予用户关闭并浏览首页的自由 */}
               <button 
-                onClick={() => setIsGateDismissed(true)} 
+                onClick={() => handleDismissGate} 
                 className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
               >
                 <FaTimes size={14} />
