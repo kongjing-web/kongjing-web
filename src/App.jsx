@@ -1255,6 +1255,30 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
     fetchDirectTargets();
   }, [publishingCardForDirect]);
+
+  // ⚡ 1. 封装一个丝滑的复制 + 跳转处理器
+  const handleGoToBotFather = async () => {
+    const command = '/setinline';
+    
+    // 🚀 魔法第一步：利用 WebView 容器能力，静默把指令塞进用户的剪贴板
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(command);
+      } catch (err) {
+        console.error('剪贴板写入失败', err);
+      }
+    }
+
+    // 🚀 魔法第二步：使用现代预填链接，能直接填就直接填，不能直接填也有剪贴板兜底
+    const fatherUrl = `https://t.me/BotFather?text=${encodeURIComponent(command)}`;
+    
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+      window.Telegram.WebApp.openTelegramLink(fatherUrl);
+    } else {
+      window.open(fatherUrl, '_blank');
+    }
+  };  
+
 // ==========================================================================
   // 🛡️ 链式状态机流水线拦截处理器 (全阶段支持右上角 X 软关闭模式)
   // ==========================================================================
@@ -1318,7 +1342,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             <div className="mt-3 p-2 bg-slate-50 rounded-xl border border-gray-100 text-[10px] text-gray-500 space-y-1">
               <p className="font-bold text-gray-700">💡 开通指南（只需10秒）：</p >
               <p>1. 私聊官方机器人 <span className="font-bold text-indigo-600">@BotFather</span></p >
-              <p>2. 发送指令：<span className="font-mono bg-white px-1 border border-gray-200 rounded">/setinline</span></p >
+              <p>2.  进入对话框后，**直接发送**或**长按粘贴**指令（指令自动复制）：<span className="font-mono bg-white px-1 border border-gray-200 rounded">/setinline</span></p >
               <p>3. 选择您绑定的 Bot：<span className="font-mono">@{gateData.bound_bot_username}</span></p >
               <p>4. 输入任意占位符提示词（例如：<span className="text-gray-400">搜索我的空境卡片...</span>）即大功告成！</p >
             </div>

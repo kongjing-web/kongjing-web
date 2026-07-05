@@ -838,7 +838,12 @@ async def get_current_tg_user(
     # 兜底策略：如果前端没传后缀，或者数据库里查不到这个 Bot（可能是刚解绑或主舰），直接用母舰 Token 校验
     if not target_bot_token:
         target_bot_token = MAIN_BOT_TOKEN
-
+        
+    print("\n====== [KONGJING DEBUG START] ======")
+    print(f"👉 1. 前端传过来的原始入口参数 (Header): {x_entrance_bot}")
+    print(f"👉 2. 经过清洗后的入口参数: {entrance_bot if entrance_bot else '💡 未传(视为主舰流量)'}")
+    print(f"👉 3. 最终决定的校验 Token: {target_bot_token[:10] if target_bot_token else '⚠️ 完全没查到 (None)！'}...")
+    print("====== [KONGJING DEBUG END] ======\n")
     # =====================================================================
     # STEP 3. 🛡️ 真实性校验：利用定位到的 Token 压榨出 Telegram 官方签名真值
     # =====================================================================
@@ -920,6 +925,45 @@ async def get_current_tg_user(
         "last_reset_month": row[8] or '',
         "current_entrance_bot": entrance_bot  # 完美透传客观入口网关
     }
+
+@app.get("/user/gate_check")
+async def check_user_bot_gate_status(current_user: dict = Depends(get_current_tg_user)):
+    """
+    【纯净中央数字底座听诊网关】
+    后端绝不包含任何硬编码的文案或业务级卡死阻断逻辑。
+    只输出 4 个精确反映客观技术指标的黄金数据，判决与展示全权下放到前端状态机。
+    """
+    bot_token = current_user.get("bot_token", "").strip()
+    bot_username = current_user.get("bot_username", "").strip()
+    entrance_bot = current_user.get("current_entrance_bot", "").strip()
+    
+    # 指标 1：用户本身是否绑定了任何专属 Bot
+    is_bound = bool(bot_token and bot_username)
+    
+    # 指标 2：该绑定的 Bot 是否已经开通了 Telegram 官方的 Inline (内联) 分享模式
+    is_inline_enabled = False
+    if is_bound:
+        try:
+            # 🔍 实时连线 TG 官方总线嗅探 getMe 指标
+            res = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=3)
+            if res.ok:
+                bot_info = res.json().get("result", {})
+                # supports_inline_queries 为 TG 官方返回的是否在 BotFather 开启了内联的硬真值标记
+                is_inline_enabled = bool(bot_info.get("supports_inline_queries", False))
+        except Exception as e:
+            print(f"[中央网关提示] 预检自定义 Bot 官方内联状态产生网络抖动: {e}")
+            is_inline_enabled = False # 超时或网络异常时优雅降级，不卡死用户体验
+            
+    return {
+        "code": 200,
+        "status": "success",
+        "data": {
+            "is_bound": is_bound,                  # 📊 1. 用户是否已绑定专属 Bot (True/False)
+            "bound_bot_username": bot_username,    # 📊 2. 用户绑定的专属 Bot 名字 (无则为空字符串)
+            "is_inline_enabled": is_inline_enabled, # 📊 3. 专属 Bot 是否已在官方开通内联 (True/False)
+            "current_entrance_bot": entrance_bot   # 📊 4. 用户当前实际打开小程序的入口 Bot 名字 (自适应补全)
+        }
+    }   
 
 def get_user_permission(user: dict) -> dict:
     """
