@@ -990,7 +990,10 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
   // 1. 基础状态与引用声明
   const [activeCardId, setActiveCardId] = useState(null);
-  const [showUserMenu, setShowUserMenu] = useState(false); 
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const toggleCardActions = (id) => {
+    setActiveCardId(activeCardId === id ? null : id);
+  };   
   const menuRef = useRef(null);
 
   const [isBatchMode, setIsBatchMode] = useState(false);
@@ -1002,20 +1005,21 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   // 🛡️ 专属 Bot 状态验证对账网关状态
   const [gateData, setGateData] = useState(null);
   const [isGateLoading, setIsGateLoading] = useState(true);
-  const [isGateDismissed, setIsGateDismissed] = useState(() => {
+  const [isPipelineMuted, setIsPipelineMuted] = useState(() => {
     if (typeof window !== 'undefined') {
-      return sessionStorage.getItem('kongjing_gate_dismissed') === 'true';
+      // 使用 sessionStorage 记录，用户完全关闭并重新进入小程序时会自动清空
+      return sessionStorage.getItem('kongjing_pipeline_muted') === 'true';
     }
     return false;
-  }); 
+  });
 
 // ⚡ 统一的弹窗关闭与会话锁定处理器
-  const handleDismissGate = () => {
-    setIsGateDismissed(true);
+  const handleMutePipeline = () => {
+    setIsPipelineMuted(true);
     if (typeof window !== 'undefined') {
-      sessionStorage.setItem('kongjing_gate_dismissed', 'true');
+      sessionStorage.setItem('kongjing_pipeline_muted', 'true');
     }
-  };  
+  };
 
   const longPressTimer = useRef(null);
   const isLongPressTriggered = useRef(false);
@@ -1048,8 +1052,6 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       }
       try {
         const initData = typeof window !== 'undefined' ? window.Telegram?.WebApp?.initData : '';
-        const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');      
-        
         const response = await fetch('https://www.kongjing.online/api/user/gate_check', {
           method: 'GET',
           headers: {
@@ -1057,7 +1059,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             'Authorization': `Bearer ${initData}`
           }
         });
-     
+    
         if (response.ok) {
           const result = await response.json();
           if (result.status === 'success' || result.code === 200) {
@@ -1072,7 +1074,12 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     };
 
     fetchGateCheck();
-  }, [isAnonymous]);
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', fetchGateCheck);
+      return () => window.removeEventListener('focus', fetchGateCheck);
+    }
+  }, [isAnonymous, currentUser]);
 
   // ==========================================
   // ⚡ 长按多选核心自研触发器
@@ -1293,21 +1300,33 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   };  
 
   // ==========================================================================
-  // 🛡️ 链式状态机流水线拦截处理器 (全阶段支持右上角 X 软关闭模式)
+  // 🛡️ 链式状态机流水线拦截处理器 (带全局熔断保护模式)
   // ==========================================================================
   let gateOverlay = null;
 
-  // 只要用户没有主动点击关闭（!isGateDismissed），且网关数据就绪，就按优先级出弹窗
-  if (!isGateLoading && gateData && !isGateDismissed) {
-    
-    // 🔥 【一阶弹窗】：尚未绑定专属 Bot (is_bound === false)
+  // 1. 动态计算当前应该处于哪一个阶段
+  let currentStage = null;
+  if (gateData) {
     if (gateData.is_bound === false) {
+      currentStage = 'unbound';
+    } else if (gateData.is_inline_enabled === false) {
+      currentStage = 'inline_disabled';
+    } else if (cleanBotName(gateData.current_entrance_bot) !== cleanBotName(gateData.bound_bot_username)) {
+      currentStage = 'entrance_mismatch';
+    }
+  }
+
+  // 2. 核心控制：只有当未加载、数据存在、且管线【未被手动熔断】时才渲染弹窗
+  if (!isGateLoading && gateData && !isPipelineMuted && currentStage) {
+    
+    // 🔥 【一阶弹窗】：尚未绑定传统 Bot
+    if (currentStage === 'unbound') {
       gateOverlay = (
         <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
           <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
-            {/* 右上角允许软关闭 - ⚡ 已修正 onClick */}
+            {/* 点击 X 关闭：触发熔断，本次进入小程序不再骚扰用户 */}
             <button 
-              onClick={handleDismissGate} 
+              onClick={handleMutePipeline} 
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
             >
               <FaTimes size={14} />
@@ -1319,11 +1338,9 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
               您当前尚未绑定专属 Bot。配置专属私有租户 Bot，可“保存/发布”卡片、自定义品牌名称。
             </p >
+            {/* 点击行动按钮：直接去配置，不触发熔断，返回后可直接连贯触发二阶判断 */}
             <button 
-              onClick={() => {
-                handleDismissGate();
-                onNavigateSettings(); // 一键跳转到设置页
-              }} 
+              onClick={onNavigateSettings} 
               className="w-full mt-4 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-md shadow-amber-100 transition-all flex items-center justify-center gap-1.5"
             >
               立即去配置绑定 <FaExternalLinkAlt size={10} />
@@ -1333,14 +1350,14 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       );
     }
 
-    // 🔥 【二阶弹窗】：已绑定但未开通 Inline 内联模式 (is_inline_enabled === false)
-    else if (gateData.is_bound === true && gateData.is_inline_enabled === false) {
+    // 🔥 【二阶弹窗】：已绑定但未开通 Inline 内联模式
+    else if (currentStage === 'inline_disabled') {
       gateOverlay = (
         <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
           <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
-            {/* 右上角允许软关闭 - ⚡ 已修正 onClick */}
+            {/* 点击 X 关闭：触发熔断，二阶被关闭后，三阶也不会再弹 */}
             <button 
-              onClick={handleDismissGate} 
+              onClick={handleMutePipeline} 
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
             >
               <FaTimes size={14} />
@@ -1350,16 +1367,14 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             </div>
             <h3 className="text-sm font-black text-gray-950">内联分享模式未激活</h3>
             <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
-              您的专属 Bot 已绑定，但尚未开通高级内联分享能力，这会导致您无法在任何聊天窗口中通过输入 <span className="font-mono text-indigo-600">@{gateData.bound_bot_username}</span> 直接唤起卡片。
+              您的专属 Bot 已绑定，但尚未开通高级内联分享能力。
             </p >
             <div className="mt-3 p-2 bg-slate-50 rounded-xl border border-gray-100 text-[10px] text-gray-500 space-y-1">
               <p className="font-bold text-gray-700">💡 开通指南（只需10秒）：</p >
               <p>1. 私聊官方机器人 <span className="font-bold text-indigo-600">@BotFather</span></p >
-              <p>2. 进入对话框后，页面输入框通常已**自动预填**，或直接**长按粘贴**发送指令：<span className="font-mono bg-white px-1 border border-gray-200 rounded">/setinline</span></p >
-              <p>3. 选择您绑定的 Bot：<span className="font-mono">@{gateData.bound_bot_username}</span></p >
-              <p>4. 输入任意占位符提示词（例如：<span className="text-gray-400">搜索我的空境卡片...</span>）即大功告成！</p >
+              <p>2. 发送指令：<span className="font-mono bg-white px-1 border border-gray-200 rounded">/setinline</span></p >
+              <p>3. 选择您的 Bot：<span className="font-mono">@{gateData.bound_bot_username}</span></p >
             </div>
-            {/* ⚡ 已将 onClick 彻底换绑到高级自适应跳转函数上 */}
             <button 
               onClick={handleGoToBotFather} 
               className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-md shadow-indigo-100 transition-all flex items-center justify-center gap-1.5"
@@ -1371,52 +1386,43 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       );
     }
 
-    // 🔥 【三阶弹窗】：防伪入口不匹配拦截 (current_entrance_bot != bound_bot_username)
-    else if (gateData.is_bound === true && gateData.is_inline_enabled === true) {
-      const entrance = cleanBotName(gateData.current_entrance_bot);
-      const bound = cleanBotName(gateData.bound_bot_username);
-      
-      if (entrance !== bound) {
-        gateOverlay = (
-          <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
-            <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-200 p-6 shadow-2xl text-center relative animate-in zoom-in-95 duration-200">
-              {/* 右上角允许软关闭 - ⚡ 已修正 onClick */}
-              <button 
-                onClick={handleDismissGate} 
-                className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <FaTimes size={14} />
-              </button>
-              <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 mx-auto mb-4">
-                <FaExternalLinkAlt size={18} />
-              </div>
-              <h3 className="text-sm font-black text-gray-950">安全入口不匹配提示</h3>
-              <p className="text-[11px] text-gray-400 mt-2.5 leading-relaxed">
-                您当前正在通过其他渠道访问小程序。
-              </p >
-              <p className="text-[11px] text-indigo-600 mt-2 font-semibold leading-relaxed px-1">
-                您目前处于全功能阅览状态。但由于 Telegram 内联隔离机制，如需“保存/发布”卡片，请通过您的专属底座进入。
-              </p >
-              <div className="my-4 py-1.5 px-3 bg-indigo-50/60 rounded-xl border border-indigo-100/40 inline-block">
-                <span className="text-xs font-black text-indigo-950">@{gateData.bound_bot_username}</span>
-              </div>
-              <button 
-                onClick={() => {
-                  const targetBotUrl = `https://t.me/${cleanBotName(gateData.bound_bot_username)}`;
-                  if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-                    window.Telegram.WebApp.openTelegramLink(targetBotUrl);
-                  } else {
-                    window.open(targetBotUrl, '_blank');
-                  }
-                }} 
-                className="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-1.5"
-              >
-                进入您的专属私有 Bot
-              </button>
+    // 🔥 【三阶弹窗】：防伪入口不匹配拦截
+    else if (currentStage === 'entrance_mismatch') {
+      gateOverlay = (
+        <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
+          <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-200 p-6 shadow-2xl text-center relative animate-in zoom-in-95 duration-200">
+            <button 
+              onClick={handleMutePipeline} 
+              className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <FaTimes size={14} />
+            </button>
+            <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 mx-auto mb-4">
+              <FaExternalLinkAlt size={18} />
             </div>
+            <h3 className="text-sm font-black text-gray-950">安全入口不匹配提示</h3>
+            <p className="text-[11px] text-gray-400 mt-2.5 leading-relaxed">
+              您目前处于全功能阅览状态。如需“保存/发布”卡片，请通过您的专属底座进入。
+            </p >
+            <div className="my-4 py-1.5 px-3 bg-indigo-50/60 rounded-xl border border-indigo-100/40 inline-block">
+              <span className="text-xs font-black text-indigo-950">@{gateData.bound_bot_username}</span>
+            </div>
+            <button 
+              onClick={() => {
+                const targetBotUrl = `https://t.me/${cleanBotName(gateData.bound_bot_username)}`;
+                if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+                  window.Telegram.WebApp.openTelegramLink(targetBotUrl);
+                } else {
+                  window.open(targetBotUrl, '_blank');
+                }
+              }} 
+              className="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-1.5"
+            >
+              进入您的专属私有 Bot
+            </button>
           </div>
-        );
-      }
+        </div>
+      );
     }
   }
 
