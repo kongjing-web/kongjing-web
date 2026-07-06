@@ -506,7 +506,7 @@ const resources = {
             guide_title: "💡 Activation Guide (Takes only 10s):",
             step1: "1. Chat with the official <1>@BotFather</1>",
             step2: "2. Send command: <1>/setinline</1>",
-            step3: "3. Select your Bot: <1>@{{username}}</1>",
+            step3: "3. Select your bot: <1>@{{username}}</1>",
             btn: "Open @BotFather"
           },
           entrance_mismatch: {

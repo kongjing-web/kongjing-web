@@ -2203,35 +2203,70 @@ function SettingsScreen({ currentUser, onBack, onSave }) {
             </div>
 
             {localGate && localGate.is_bound === true && localGate.is_inline_enabled === false && (
-              <div className="mt-4 rounded-2xl bg-indigo-50/50 border border-indigo-100/60 p-4 animate-in fade-in duration-300">
-                <div className="flex items-center gap-2 text-indigo-950 font-black text-xs">
-                  <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
-                  专属 Bot 快捷开通内联分享指引
+              <div className="mt-4 rounded-3xl bg-indigo-50/30 border border-indigo-100 p-5 animate-in fade-in duration-300">
+                {/* 顶部的图标保持与弹窗一致 */}
+                <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-500 mb-3">
+                  <FaToggleOn size={20} />
                 </div>
-                <p className="text-[11px] text-gray-500 mt-1.5 leading-relaxed">
-                  您的专属 Bot 还没有激活内联分享，请按照以下几步操作，即可实现全聊天场景快速唤起发卡：
+                
+                {/* 直接复用首页二阶段弹窗的标题与描述 Key */}
+                <h3 className="text-sm font-black text-gray-950">
+                  {t('home.gate.inline_disabled.title')}
+                </h3>
+                <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                  {t('home.gate.inline_disabled.desc')}
                 </p >
-                <div className="mt-2.5 text-[10px] text-gray-600 space-y-1 font-medium bg-white/70 rounded-xl p-2.5 border border-indigo-50/50">
-                  <p>1. 唤起官方控制台 <span className="font-bold text-indigo-600">@BotFather</span></p >
-                  <p>2. 发送指令：<span className="font-mono bg-slate-100 px-1 py-0.5 rounded text-indigo-700">/setinline</span></p >
-                  <p>3. 选中您的机器人：<span className="font-mono text-slate-800">@{localGate.bound_bot_username}</span></p >
-                  <p>4. 设定检索占位语（例如：<span className="text-gray-400">输入卡片标题搜索...</span>）</p >
+                
+                {/* 引导步骤区：注意这里的 username 变量要换成当前组件的 localGate */}
+                <div className="mt-3 p-2 bg-white rounded-xl border border-gray-100 text-[10px] text-gray-500 space-y-1">
+                  <p className="font-bold text-gray-700">
+                    {t('home.gate.inline_disabled.guide_title')}
+                  </p >
+                  <p>
+                    <Trans 
+                      i18nKey="home.gate.inline_disabled.step1"
+                      components={[<span key="0" />, <span className="font-bold text-indigo-600" />]}
+                    />
+                  </p >
+                  <p>
+                    <Trans 
+                      i18nKey="home.gate.inline_disabled.step2"
+                      components={[<span key="0" />, <span className="font-mono bg-slate-50 px-1 border border-gray-200 rounded" />]}
+                    />
+                  </p >
+                  <p>
+                    <Trans 
+                      i18nKey="home.gate.inline_disabled.step3"
+                      values={{ username: localGate.bound_bot_username }}
+                      components={[<span key="0" />, <span className="font-mono" />]}
+                    />
+                  </p >
                 </div>
-                <button
-                  onClick={() => {
-                    const fatherUrl = `https://t.me/BotFather`;
+
+                {/* 动作按钮：平移了首页的自动复制逻辑，体验更丝滑 */}
+                <button 
+                  onClick={async () => {
+                    const command = '/setinline';
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      try {
+                        await navigator.clipboard.writeText(command);
+                      } catch (err) {
+                        console.error('剪贴板写入失败', err);
+                      }
+                    }
+                    const fatherUrl = `https://t.me/BotFather?text=${encodeURIComponent(command)}`;
                     if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
                       window.Telegram.WebApp.openTelegramLink(fatherUrl);
                     } else {
                       window.open(fatherUrl, '_blank');
                     }
-                  }}
-                  className="mt-3 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2 rounded-xl active:scale-[0.98] transition-all flex items-center justify-center gap-1"
+                  }} 
+                  className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-md shadow-indigo-100 transition-all flex items-center justify-center gap-1.5"
                 >
-                  打开 @BotFather 极速开通 <FaExternalLinkAlt size={9} />
+                  {t('home.gate.inline_disabled.btn')}
                 </button>
               </div>
-            )}            
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-2">{t('settings_lang_label')}</label>
