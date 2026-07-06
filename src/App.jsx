@@ -1508,7 +1508,10 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                 <FaLayerGroup className="text-indigo-500" /> {t('home_settings')}
               </button>
               <div className="h-px bg-gray-100 my-1 mx-2"></div>
-              <button onClick={() => { alert(t('home_calling_support')); setShowUserMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors">
+              <button 
+                onClick={handleContactSupport} // 👈 完美接入刚刚写好的跳转网关
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-slate-50 rounded-xl transition-colors"
+              >
                 <FaHeadset className="text-emerald-500" /> {t('home_support')}
               </button>
             </div>
