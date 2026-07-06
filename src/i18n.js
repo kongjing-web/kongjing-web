@@ -2,6 +2,9 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
 const resources = {
+  // ==========================================
+  // 🇨🇳 简体中文语言包
+  // ==========================================
   zh: {
     translation: { 
       // === common 通用模块 ===
@@ -225,9 +228,43 @@ const resources = {
 
       // === preview 效果预览模块 ===
       preview_title: "卡片效果预览",
-      preview_today: "今天"
+      preview_today: "今天",
+
+      // ====================================================================
+      // 🔥 【🚀 新增】安全拦截状态机管线专属多语言模块 (嵌套对象形式完美对齐路径)
+      // ====================================================================
+      home: {
+        gate: {
+          unbound: {
+            title: "升级独立数字底座",
+            desc: "您当前尚未绑定专属 Bot。配置专属私有租户 Bot，可“保存/发布”卡片、自定义品牌名称。",
+            btn: "立即去配置绑定"
+          },
+          inline_disabled: {
+            title: "内联分享模式未激活",
+            desc: "您的专属 Bot 已绑定，但尚未开通高级内联分享能力。",
+            guide_title: "💡 开通指南（只需10秒）：",
+            step1: "1. 私聊官方机器人 <1>@BotFather</1>",
+            step2: "2. 发送指令：<1>/setinline</1>",
+            step3: "3. 选择您的 Bot：<1>@{{username}}</1>",
+            btn: "打开 @BotFather 去开通"
+          },
+          entrance_mismatch: {
+            title: "安全入口不匹配提示",
+            desc: "您目前处于全功能阅览状态。如需“保存/发布”卡片，请通过您的专属底座进入。",
+            btn: "进入您的专属私有 Bot"
+          },
+          banner: {
+            text: "<0>💡 当前正通过他人底座跨端阅览，如需发布卡片请返回 </0><1>@{{username}}</1>"
+          }
+        }
+      }
     }
   },
+
+  // ==========================================
+  // 🇺🇸 英文语言包 (English)
+  // ==========================================
   en: {
     translation: { 
       // === common 通用模块 ===
@@ -451,7 +488,95 @@ const resources = {
 
       // === preview 效果预览模块 ===
       preview_title: "Card Preview",
-      preview_today: "Today"
+      preview_today: "Today",
+
+      // ====================================================================
+      // 🔥 【🚀 新增】安全拦截状态机管线专属多语言模块 (英文版)
+      // ====================================================================
+      home: {
+        gate: {
+          unbound: {
+            title: "Upgrade to Independent Digital Base",
+            desc: "You have not bound your exclusive Bot yet. Configure an exclusive private tenant Bot to 'Save/Publish' cards and customize your brand name.",
+            btn: "Configure & Bind Now"
+          },
+          inline_disabled: {
+            title: "Inline Sharing Mode Inactive",
+            desc: "Your exclusive Bot is bound, but advanced inline sharing capabilities are not yet activated.",
+            guide_title: "💡 Activation Guide (Takes only 10s):",
+            step1: "1. Message the official bot <1>@BotFather</1>",
+            step2: "2. Send command: <1>/setinline</1>",
+            step3: "3. Select your Bot: <1>@{{username}}</1>",
+            btn: "Open @BotFather to Activate"
+          },
+          entrance_mismatch: {
+            title: "Security Entrance Mismatch",
+            desc: "You are currently in full-feature preview mode. To 'Save/Publish' cards, please enter through your exclusive base.",
+            btn: "Enter Your Exclusive Private Bot"
+          },
+          banner: {
+            text: "<0>💡 Currently viewing cross-platform via someone else's base. To publish cards, please return to </0><1>@{{username}}</1>"
+          }
+        }
+      }
+    }
+  },
+
+  // ==========================================
+  // 🇷🇺 俄语语言包 (Русский) - 针对独家泛 CIS 广告业务精准降维打击
+  // ==========================================
+  ru: {
+    translation: {
+      common_back: "Назад",
+      common_save: "Сохранить",
+      common_cancel: "Отмена",
+      common_delete: "Удалить",
+      common_edit: "Изменить",
+      common_preview: "Предпросмотр",
+      common_publish: "Публикация",
+      common_data: "Данные",
+      common_close: "Закрыть",
+      common_confirm: "Подтвердить",
+      common_loading: "Синхронизация...",
+      common_anonymous: "Аноним",
+      common_id: "ID: ",
+      common_author: "Автор: ",
+      common_status: "Статус",
+      common_none: "Нет",
+      common_tip: "Подсказка",
+      common_copy: "Копировать",
+      common_success: "Успешно",
+      common_failed: "Ошибка",
+
+      // ====================================================================
+      // 🔥 【🚀 新增】安全拦截状态机管线专属多语言模块 (俄语版)
+      // ====================================================================
+      home: {
+        gate: {
+          unbound: {
+            title: "Обновление до независимой цифровой базы",
+            desc: "Вы еще не привязали свой эксклюзивный бот. Настройте собственный приватный бот, чтобы иметь возможность сохранять/публиковать карточки и кастомизировать имя бренда.",
+            btn: "Настроить и привязать сейчас"
+          },
+          inline_disabled: {
+            title: "Встроенный режим (Inline) не активен",
+            desc: "Ваш эксклюзивный бот привязан, но продвинутые возможности встроенного шеринга еще не активированы.",
+            guide_title: "💡 Руководство по активации (всего 10 секунд):",
+            step1: "1. Напишите официальному боту <1>@BotFather</1>",
+            step2: "2. Отправьте команду: <1>/setinline</1>",
+            step3: "3. Выберите вашего бота: <1>@{{username}}</1>",
+            btn: "Открыть @BotFather для активации"
+          },
+          entrance_mismatch: {
+            title: "Несоответствие безопасного входа",
+            desc: "Сейчас вы находитесь в режиме полного предпросмотра. Чтобы сохранять/публиковать карточки, войдите через вашу эксклюзивную базу.",
+            btn: "Войти в свой приватный бот"
+          },
+          banner: {
+            text: "<0>💡 Просмотр через чужую базу. Для публикации карточек вернитесь в </0><1>@{{username}}</1>"
+          }
+        }
+      }
     }
   }
 };
@@ -460,7 +585,7 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
-    lng: 'zh', // 👈 这一行很关键：设置一个保底的默认语言，防止后端没返回语言时变空白Key
+    lng: 'zh', // 👈 默认语言设置
     fallbackLng: 'zh', 
     interpolation: { escapeValue: false }
   });

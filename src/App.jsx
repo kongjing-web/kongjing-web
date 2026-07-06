@@ -20,7 +20,7 @@ import {
   FaRobot, FaKey, FaCopy, FaExternalLinkAlt, FaArrowRight, FaTimes, FaToggleOn
 } from "react-icons/fa";
 
-import { useTranslation } from 'react-i18next';
+import { useTranslation, Trans } from 'react-i18next';
 import './i18n';
 
 if (typeof window !== 'undefined') {
@@ -1343,7 +1343,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       gateOverlay = (
         <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
           <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
-            {/* 点击 X 关闭：触发熔断，本次进入小程序不再骚扰用户 */}
+            {/* 点击 X 关闭：触发熔断 */}
             <button 
               onClick={handleMutePipeline} 
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
@@ -1353,16 +1353,18 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             <div className="w-10 h-10 rounded-full bg-amber-50 flex items-center justify-center text-amber-500 mb-3">
               <FaRobot size={20} />
             </div>
-            <h3 className="text-sm font-black text-gray-950">升级独立数字底座</h3>
+            <h3 className="text-sm font-black text-gray-950">
+              {t('home.gate.unbound.title')}
+            </h3>
             <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
-              您当前尚未绑定专属 Bot。配置专属私有租户 Bot，可“保存/发布”卡片、自定义品牌名称。
+              {t('home.gate.unbound.desc')}
             </p >
-            {/* 点击行动按钮：直接去配置，不触发熔断，返回后可直接连贯触发二阶判断 */}
+            {/* 点击行动按钮 */}
             <button 
               onClick={onNavigateSettings} 
               className="w-full mt-4 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-md shadow-amber-100 transition-all flex items-center justify-center gap-1.5"
             >
-              立即去配置绑定 <FaExternalLinkAlt size={10} />
+              {t('home.gate.unbound.btn')} <FaExternalLinkAlt size={10} />
             </button>
           </div>
         </div>
@@ -1374,7 +1376,6 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       gateOverlay = (
         <div className="fixed inset-0 z-[100] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
           <div className="w-full max-w-xs bg-white rounded-2xl border border-gray-100 p-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
-            {/* 点击 X 关闭：触发熔断，二阶被关闭后，三阶也不会再弹 */}
             <button 
               onClick={handleMutePipeline} 
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
@@ -1384,21 +1385,44 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-500 mb-3">
               <FaToggleOn size={20} />
             </div>
-            <h3 className="text-sm font-black text-gray-950">内联分享模式未激活</h3>
+            <h3 className="text-sm font-black text-gray-950">
+              {t('home.gate.inline_disabled.title')}
+            </h3>
             <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
-              您的专属 Bot 已绑定，但尚未开通高级内联分享能力。
+              {t('home.gate.inline_disabled.desc')}
             </p >
+            
+            {/* 💡 引入 Trans 组件处理富文本和变量嵌套 */}
             <div className="mt-3 p-2 bg-slate-50 rounded-xl border border-gray-100 text-[10px] text-gray-500 space-y-1">
-              <p className="font-bold text-gray-700">💡 开通指南（只需10秒）：</p >
-              <p>1. 私聊官方机器人 <span className="font-bold text-indigo-600">@BotFather</span></p >
-              <p>2. 发送指令：<span className="font-mono bg-white px-1 border border-gray-200 rounded">/setinline</span></p >
-              <p>3. 选择您的 Bot：<span className="font-mono">@{gateData.bound_bot_username}</span></p >
+              <p className="font-bold text-gray-700">
+                {t('home.gate.inline_disabled.guide_title')}
+              </p >
+              <p>
+                <Trans 
+                  i18nKey="home.gate.inline_disabled.step1"
+                  components={[<span key="0" />, <span className="font-bold text-indigo-600" />]}
+                />
+              </p >
+              <p>
+                <Trans 
+                  i18nKey="home.gate.inline_disabled.step2"
+                  components={[<span key="0" />, <span className="font-mono bg-white px-1 border border-gray-200 rounded" />]}
+                />
+              </p >
+              <p>
+                <Trans 
+                  i18nKey="home.gate.inline_disabled.step3"
+                  values={{ username: gateData.bound_bot_username }}
+                  components={[<span key="0" />, <span className="font-mono" />]}
+                />
+              </p >
             </div>
+
             <button 
               onClick={handleGoToBotFather} 
               className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-md shadow-indigo-100 transition-all flex items-center justify-center gap-1.5"
             >
-              打开 @BotFather 去开通 
+              {t('home.gate.inline_disabled.btn')}
             </button>
           </div>
         </div>
@@ -1419,13 +1443,20 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 mx-auto mb-4">
               <FaExternalLinkAlt size={18} />
             </div>
-            <h3 className="text-sm font-black text-gray-950">安全入口不匹配提示</h3>
+            <h3 className="text-sm font-black text-gray-950">
+              {t('home.gate.entrance_mismatch.title')}
+            </h3>
             <p className="text-[11px] text-gray-400 mt-2.5 leading-relaxed">
-              您目前处于全功能阅览状态。如需“保存/发布”卡片，请通过您的专属底座进入。
+              {t('home.gate.entrance_mismatch.desc')}
             </p >
+            
+            {/* 动态专属底座展示块 */}
             <div className="my-4 py-1.5 px-3 bg-indigo-50/60 rounded-xl border border-indigo-100/40 inline-block">
-              <span className="text-xs font-black text-indigo-950">@{gateData.bound_bot_username}</span>
+              <span className="text-xs font-black text-indigo-950">
+                @{gateData.bound_bot_username}
+              </span>
             </div>
+
             <button 
               onClick={() => {
                 const targetBotUrl = `https://t.me/${cleanBotName(gateData.bound_bot_username)}`;
@@ -1437,7 +1468,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
               }} 
               className="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-1.5"
             >
-              进入您的专属私有 Bot
+              {t('home.gate.entrance_mismatch.btn')}
             </button>
           </div>
         </div>
@@ -1445,7 +1476,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     }
   }
 
-  // ✨【搭配的精妙对仗横幅】：如果用户点 X 关掉了三阶弹窗，顶部会保留这行极简且高级的暗色微提示，绝不打扰操作
+  // ✨【搭配的精妙对仗横幅】：顶部的精简暗色微提示，用 Trans 完美包裹带有点击动作的文本片段
   let topWarningBanner = null;
   if (gateData && gateData.is_bound && gateData.is_inline_enabled) {
     const entrance = cleanBotName(gateData.current_entrance_bot);
@@ -1453,17 +1484,25 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     if (entrance !== bound) {
       topWarningBanner = (
         <div className="bg-indigo-950 text-indigo-200 text-[10px] px-4 py-2 text-center flex items-center justify-center gap-2 border-b border-indigo-900 select-none animate-in slide-in-from-top duration-300">
-          <span>💡 当前正通过他人底座跨端阅览，如需发布卡片请返回</span>
-          <span 
-            onClick={() => {
-              const targetBotUrl = `https://t.me/${bound}`;
-              if (typeof window !== 'undefined' && window.Telegram?.WebApp) window.Telegram.WebApp.openTelegramLink(targetBotUrl);
-              else window.open(targetBotUrl, '_blank');
-            }}
-            className="underline font-bold text-white cursor-pointer hover:text-indigo-200 animate-pulse"
-          >
-            @{gateData.bound_bot_username}
-          </span>
+          <Trans
+            i18nKey="home.gate.banner.text"
+            values={{ username: gateData.bound_bot_username }}
+            components={[
+              <span key="0" />,
+              <span 
+                key="1"
+                onClick={() => {
+                  const targetBotUrl = `https://t.me/${bound}`;
+                  if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+                    window.Telegram.WebApp.openTelegramLink(targetBotUrl);
+                  } else {
+                    window.open(targetBotUrl, '_blank');
+                  }
+                }}
+                className="underline font-bold text-white cursor-pointer hover:text-indigo-200 animate-pulse"
+              />
+            ]}
+          />
         </div>
       );
     }
