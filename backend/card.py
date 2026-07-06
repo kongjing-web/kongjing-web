@@ -30,6 +30,8 @@ from psycopg2.pool import ThreadedConnectionPool
 from telegram_formatter import sanitize_for_telegram, truncate_caption, smart_clean_inline_keyboard
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+import redis
+from datetime import datetime
 
 
 load_dotenv() 
@@ -49,6 +51,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 ) 
+
+# ==========================================
+# 🔌 Redis & 客服核心常量配置 (直接扔在文件头部或配置区)
+# ==========================================
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+r_cache = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, db=0, decode_responses=True)
+
+SUPPORT_BOT_TOKEN = "8826811203:AAG-tjP_Djr8Ji7UcdEv8Iui_zmXURWtfWI"
+SUPPORT_GROUP_ID = -1004491807478
+TICKET_TTL = 5 * 24 * 3600  # ⏳ 工单生命周期：5天自动过期
 
 # 🔐 从环境变量中读取系统主（内置）Bot Token
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
@@ -583,11 +597,32 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
     except Exception as e:
         print("[网络通信发信故障]:", e)
 
-    
-init_db() 
 
 # 1. 初始化数据库表结构
 init_db() 
+
+# ==========================================
+# ⚓ 客服 Bot Webhook 自动注册 (放在 app 启动事件里调用)
+# ==========================================
+def auto_align_support_bot_webhook(api_base_url: str):
+    if not SUPPORT_BOT_TOKEN:
+        print("⚠️ [客服自检] 未检测到 SUPPORT_BOT_TOKEN，客服网关无法初始化！")
+        return
+    
+    support_webhook_url = f"{api_base_url.rstrip('/')}/tg/support_webhook"
+    print(f"⚓ [客服自检] 正在自动注册客服专线公网网关: {support_webhook_url} ...")
+    try:
+        res = requests.post(
+            f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/setWebhook",
+            json={"url": support_webhook_url, "allowed_updates": ["message"]},
+            timeout=5
+        )
+        if res.ok:
+            print(f"🟢 [客服自愈成功] 客服 Bot Webhook 全自动对齐！")
+        else:
+            print(f"❌ [客服自愈失败] TG 拒绝了网关注册: {res.text}")
+    except Exception as e:
+        print(f"❌ [客服自愈异常] 客服 Bot 注册超时: {e}")
 
 # 2. ⚓ 【主母舰系统自动化中心】服务器启动时，自动把主 Bot 的 Webhook 牢牢锚定，彻底告别浏览器手动访问！
 def auto_align_master_bot_webhook():
@@ -618,6 +653,153 @@ def auto_align_master_bot_webhook():
 
 # 顺轨执行主舰自愈（这里开启一个线程或者直接执行，由于是启动时执行一次，直接执行即可）
 auto_align_master_bot_webhook()
+auto_align_support_bot_webhook(API_BASE_URL)
+
+# ==========================================
+# 🗃️ 辅助函数：抓取数据库用户状态（直接用你原文件里的 get_db_connection）
+# ==========================================
+def _get_user_financial_and_vip_status(user_id: str) -> dict:
+    # 这里直接盲挂你现有的 get_db_connection，因为在一个文件里，随便调用
+    with get_db_connection() as (conn, cursor):
+        cursor.execute(
+            "SELECT username, role, vip_until, balance FROM users WHERE telegram_id = %s",
+            (str(user_id),)
+        )
+        row = cursor.fetchone()
+        if row:
+            username, role, vip_until, balance = row
+            is_vip = vip_until > int(time.time())
+            vip_text = f"👑 VIP 会员 (⏳ 至 {datetime.fromtimestamp(vip_until).strftime('%Y-%m-%d')})" if is_vip else "👤 普通用户"
+            return {
+                "username": f"@{username}" if username else "未设置",
+                "identity": vip_text,
+                "balance": f"{balance:.2f} USDT",
+                "role": role
+            }
+        return {"username": "全新用户", "identity": "👤 普通用户", "balance": "0.00 USDT", "role": "user"}
+
+# ==========================================
+# 🏁 核心网关：客服专属双向流量路由
+# ==========================================
+@app.post("/tg/support_webhook")
+async def telegram_support_webhook_router(request: Request, background_tasks: BackgroundTasks):
+    try:
+        update_data = await request.json()
+        message = update_data.get("message")
+        if not message:
+            return {"status": "success"}
+
+        chat_id = message["chat"]["id"]
+        chat_type = message["chat"]["type"]
+
+        # ----------------------------------------------------------------------
+        # 🚀 模式 A：用户发送私聊给客服 Bot -> 同步/创建群组 Topic 话题
+        # ----------------------------------------------------------------------
+        if chat_type == "private":
+            user_id = str(chat_id)
+            text_content = message.get("text", "")
+
+            # 过滤或首句欢迎词响应
+            if text_content.startswith("/start"):
+                welcome_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
+                await run_in_threadpool(requests.post, welcome_url, json={
+                    "chat_id": user_id,
+                    "text": "🌌 *空境系统 · 客服中心*\n\n您好！请直接在此处发送您遇到的问题或合作意向，技术团队将直接通过此窗口与您对话。",
+                    "parse_mode": "Markdown"
+                }, timeout=3)
+                return {"status": "success"}
+
+            # 1. 检索 Redis 缓存层关系
+            topic_id = r_cache.get(f"support_topic:{user_id}")
+
+            # 2. 缓存未命中 -> 开辟【新工单话题】
+            if not topic_id:
+                user_info = _get_user_financial_and_vip_status(user_id)
+                raw_first_name = message["from"].get("first_name", "User")
+                # 🔥【核心修正】：防止昵称包含 < > & 导致 TG 官方 HTML 解析引擎崩溃
+                clean_first_name = sanitize_for_telegram(raw_first_name)
+                
+                # A. 创建论坛话题
+                create_topic_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/createForumTopic"
+                topic_res = await run_in_threadpool(requests.post, create_topic_url, json={
+                    "chat_id": SUPPORT_GROUP_ID,
+                    "name": f"{raw_first_name} | ID: {user_id}"  # 标题不支持 HTML 标签，直接用原名
+                }, timeout=5)
+                
+                if not topic_res.ok:
+                    print(f"❌ [客服创建工单失败]: {topic_res.text}")
+                    return {"status": "error"}
+                
+                topic_id = str(topic_res.json()["result"]["message_thread_id"])
+
+                # B. 双向路由灌入 Redis
+                r_cache.setex(f"support_topic:{user_id}", TICKET_TTL, topic_id)
+                r_cache.setex(f"support_user:{topic_id}", TICKET_TTL, user_id)
+
+                # C. 渲染发送工业黑金极简风的【用户信息置顶卡片】
+                card_html = (
+                    f"<b>🎴 【空境工单系统 · 用户置顶卡片】</b>\n"
+                    f"<code>───────────────────</code>\n"
+                    f"👤 <b>用户昵称:</b> {clean_first_name}\n"  # 👈 使用了清洗后的安全昵称
+                    f"🆔 <b>用户 ID:</b> <code>{user_id}</code>\n"
+                    f"🏷️ <b>平台账号:</b> {user_info['username']}\n"
+                    f"💎 <b>账户身份:</b> {user_info['identity']}\n"
+                    f"💰 <b>账户余额:</b> <code>{user_info['balance']}</code>\n"
+                    f"<code>───────────────────</code>\n"
+                    f"💡 <i>提示：在此话题内直接回复，内容将全自动同步回该用户私聊。</i>"
+                )
+                
+                send_card_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
+                await run_in_threadpool(requests.post, send_card_url, json={
+                    "chat_id": SUPPORT_GROUP_ID,
+                    "message_thread_id": int(topic_id),
+                    "text": card_html,
+                    "parse_mode": "HTML"
+                }, timeout=3)
+
+            # 3. 将用户消息完美 Copy 投递至指定 Topic 话题中
+            copy_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/copyMessage"
+            await run_in_threadpool(requests.post, copy_url, json={
+                "chat_id": SUPPORT_GROUP_ID,
+                "from_chat_id": user_id,
+                "message_id": message["message_id"],
+                "message_thread_id": int(topic_id)
+            }, timeout=3)
+
+            # 4. 活跃对话自适应续期
+            r_cache.expire(f"support_topic:{user_id}", TICKET_TTL)
+            r_cache.expire(f"support_user:{topic_id}", TICKET_TTL)
+
+        # ----------------------------------------------------------------------
+        # 👑 模式 B：客服团队在私密群 Topic 话题中回复 -> 双向透传回用户私聊
+        # ----------------------------------------------------------------------
+        elif chat_id == SUPPORT_GROUP_ID and "message_thread_id" in message:
+            # 🚨 拦截内鬼：如果是机器人自己投递的消息，直接忽略，防止自循环死复读
+            if message.get("from", {}).get("is_bot"):
+                return {"status": "success"}
+
+            topic_id = str(message["message_thread_id"])
+            
+            # 1. 检索该话题对应的真实用户
+            target_user_id = r_cache.get(f"support_user:{topic_id}")
+            if target_user_id:
+                # 2. 将客服的回复精准 Copy 传递回用户私聊中
+                copy_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/copyMessage"
+                await run_in_threadpool(requests.post, copy_url, json={
+                    "chat_id": int(target_user_id),
+                    "from_chat_id": SUPPORT_GROUP_ID,
+                    "message_id": message["message_id"]
+                }, timeout=3)
+
+                # 3. 活跃回复同样触发路由续期
+                r_cache.expire(f"support_topic:{target_user_id}", TICKET_TTL)
+                r_cache.expire(f"support_user:{topic_id}", TICKET_TTL)
+
+        return {"status": "success"}
+
+    except Exception as e:
+        print(f"[客服网关严重异常]: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 # ==========================================
 # 💰 智能计价与后台调控中心（统一集权于内置主Bot）

@@ -1082,6 +1082,25 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   }, [isAnonymous, currentUser]);
 
   // ==========================================
+  // 📞 客服中心原生无缝唤起网关
+  // ==========================================
+  const handleContactSupport = () => {
+    setShowUserMenu(false); // 关闭下拉菜单
+
+    // 💡 替换提示：把下面的 'Your_Support_Bot' 换成你实际申请的客服机器人 Username（不需要带 @）
+    const SUPPORT_BOT_USERNAME = 'kongjing_01_bot'; 
+    const targetLink = `https://t.me/${SUPPORT_BOT_USERNAME.replace('@', '')}`;
+
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+      // 🚀 TG 真实环境下，使用 WebApp 原生方法打开，体验极佳，不会弹浏览器
+      window.Telegram.WebApp.openTelegramLink(targetLink);
+    } else {
+      // 🌐 普通浏览器环境降级外跳
+      window.open(targetLink, '_blank');
+    }
+  };
+
+  // ==========================================
   // ⚡ 长按多选核心自研触发器
   // ==========================================
   const handleLongPressStart = (cardId) => {
