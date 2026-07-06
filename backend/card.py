@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import redis
 from datetime import datetime
-
+import requests
 
 load_dotenv() 
 app = FastAPI(title="空境系统 - Telegram 卡片后台中心") 
@@ -508,9 +508,10 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "video_file_id": tg_file_id_str, 
                     "title": title or "精美可视化视频卡片",
-                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
+                    "description": short_description,  
                     "caption": caption,
-                    "parse_mode": "HTML"
+                    "parse_mode": "HTML",
+                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭视频网页预览
                 }
             elif norm_media == "gif":
                 inline_result = {
@@ -518,9 +519,10 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "gif_file_id": tg_file_id_str,   
                     "title": title or "精美动态卡片",
-                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
+                    "description": short_description,  
                     "caption": caption,
-                    "parse_mode": "HTML"
+                    "parse_mode": "HTML",
+                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭GIF网页预览
                 }
             else:
                 inline_result = {
@@ -528,9 +530,10 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "id": result_id,
                     "photo_file_id": tg_file_id_str, 
                     "title": title or "精美可视化卡片",
-                    "description": short_description,  # 🌟 修复：注入干净的纯文本预览，彻底终结源码裸奔
+                    "description": short_description,  
                     "caption": caption,
-                    "parse_mode": "HTML"
+                    "parse_mode": "HTML",
+                    "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭图片网页预览
                 }
         else:
             # 🔄 纯净退路：针对历史遗留无 file_id 的卡片，无缝降级回绝对 URL 爬取模式
@@ -539,11 +542,12 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                 "type": "photo",
                 "id": result_id,
                 "title": title or "精美可视化卡片",
-                "description": short_description,      # 🌟 修复：降级模式下也必须注入纯文本预览
+                "description": short_description,      
                 "photo_url": img,
                 "thumb_url": img,
                 "caption": caption,
-                "parse_mode": "HTML"
+                "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True}  # 💡 新增这一行：关闭降级图片网页预览
             } 
     else:
         # 文本卡片保持原本的 article 逻辑
@@ -551,12 +555,13 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
             "type": "article",
             "id": result_id,
             "title": title or "精美可视化卡片",
-            "description": short_description,          # 🌟 统一使用提取好的无标签干净摘要
+            "description": short_description,          
             "input_message_content": {
                 "message_text": caption,
-                "parse_mode": "HTML"
+                "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True}  # 💡 ⚠️注意：纯文本卡片参数必须写在 input_message_content 内部！
             }
-        } 
+        }
 
     if reply_markup:
         inline_result["reply_markup"] = reply_markup 
@@ -597,6 +602,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
     except Exception as e:
         print("[网络通信发信故障]:", e)
 
+    
 
 # 1. 初始化数据库表结构
 init_db() 
@@ -677,6 +683,7 @@ def _get_user_financial_and_vip_status(user_id: str) -> dict:
                 "role": role
             }
         return {"username": "全新用户", "identity": "👤 普通用户", "balance": "0.00 USDT", "role": "user"}
+
 
 # ==========================================
 # 🏁 核心网关：客服专属双向流量路由
@@ -905,6 +912,98 @@ def _save_emoji_to_db(emoji_id: str, fallback_char: str):
             (str(emoji_id), fallback_char, int(time.time()))
         )
 
+async def process_group_binding_events(update_data: dict, tenant_id: Optional[str] = None):
+    """
+    【多租户渠道双模自动锁定哨所】
+    1. 被动感知模式：捕捉 my_chat_member 事件（Bot 被拉入群组/频道）。
+    2. 主动唤醒模式：捕捉群内普通 message 里的 /bind 指令。
+    """
+    if not tenant_id:
+        return  # 没有明确的租户ID，说明不是站长的专属 Bot 流量，直接丢弃
+
+    chat_info = None
+    trigger_mode = None  # passive 或 active
+
+    # 1. 🔍 【分支 A：被动感知拦截】探测身份变更事件
+    if "my_chat_member" in update_data:
+        mcm = update_data["my_chat_member"]
+        new_status = mcm.get("new_chat_member", {}).get("status")
+        # 只要状态是 member 或 administrator，说明是被拉进群或者提权了
+        if new_status in ["member", "administrator"]:
+            chat_info = mcm.get("chat")
+            trigger_mode = "passive"
+
+    # 2. 🔍 【分支 B：主动唤醒拦截】探测群组/频道内的指令
+    elif "message" in update_data:
+        msg = update_data["message"]
+        text = str(msg.get("text") or "").strip()
+        chat_info = msg.get("chat")
+        
+        # 只在群组/超级群组/频道中响应 /bind 指令
+        if chat_info and chat_info.get("type") in ["group", "supergroup", "channel"]:
+            if text.startswith("/bind"):
+                trigger_mode = "active"
+
+    # 3. 💾 【核心资产清洗与安全存盘落地】
+    if chat_info and trigger_mode:
+        real_chat_id = str(chat_info.get("id") or "").strip()
+        chat_title = str(chat_info.get("title") or chat_info.get("username") or real_chat_id).strip()
+        chat_type = str(chat_info.get("type") or "group").strip()
+        incoming_user_id = str(tenant_id).strip()
+
+        if not real_chat_id:
+            return
+
+        db_success = False
+        # 完美对齐 2.0 数据底座架构
+        try:
+            with get_db_connection() as (_, cursor):
+                # 检查是否已存在
+                cursor.execute(
+                    "SELECT target_id FROM publish_targets WHERE user_id = %s AND chat_id = %s",
+                    (incoming_user_id, real_chat_id)
+                )
+                if cursor.fetchone():
+                    cursor.execute(
+                        "UPDATE publish_targets SET chat_title = %s, chat_type = %s, created_at = %s WHERE user_id = %s AND chat_id = %s",
+                        (chat_title, chat_type, int(time.time()), incoming_user_id, real_chat_id)
+                    )
+                else:
+                    target_id = f"tgt_{int(time.time())}_{real_chat_id.replace('-', '')}"
+                    cursor.execute(
+                        "INSERT INTO publish_targets (target_id, user_id, chat_id, chat_title, chat_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (target_id, incoming_user_id, real_chat_id, chat_title, chat_type, int(time.time()))
+                    )
+            db_success = True
+            print(f"[{trigger_mode.upper()} 自动存盘成功] 渠道「{chat_title}」({real_chat_id}) 已绑定至租户 {incoming_user_id}")
+        except Exception as db_err:
+            print(f"[⚠️ 渠道自动存盘失败]: {str(db_err)}")
+
+        # 4. 📢 【硬核自愈反哺层】动态调拨 Token，高调回执群组 ID 供用户复制
+        try:
+            active_bot_token = None
+            with get_db_connection() as (_, cursor):
+                cursor.execute("SELECT bot_token FROM users WHERE telegram_id = %s", (incoming_user_id,))
+                row = cursor.fetchone()
+                if row and row[0]:
+                    active_bot_token = row[0].strip()
+
+            if active_bot_token:
+                # 👇 核心改动：剔除全部汉字，仅发送用 HTML 标签包裹的等宽群 ID，点击即复制
+                reply_text = f"<code>{real_chat_id}</code>"
+                
+                requests.post(
+                    f"https://api.telegram.org/bot{active_bot_token}/sendMessage",
+                    json={
+                        "chat_id": real_chat_id,
+                        "text": reply_text,
+                        "parse_mode": "HTML"
+                    },
+                    timeout=5
+                )
+        except Exception as send_err:
+            print(f"[⚠️ 发送群组回执失败]: {str(send_err)}")        
+
 
 # ======================================================================
 # 🏁 彻底净化的中央交通指挥官（主路由）
@@ -929,6 +1028,9 @@ async def telegram_webhook_router(request: Request, background_tasks: Background
         # 3. 🚀 专属表情拦截器（改用 BackgroundTasks 后台异步处理，完全不阻塞主响应）
         if message_data:
             background_tasks.add_task(process_custom_emojis, message_data)
+
+        if "my_chat_member" in update_data or "message" in update_data:
+            background_tasks.add_task(process_group_binding_events, update_data, tenant_id)            
 
         # 4. 🧭 内联查询网关
         if "inline_query" in update_data:
@@ -1145,7 +1247,7 @@ async def check_user_bot_gate_status(current_user: dict = Depends(get_current_tg
             "is_inline_enabled": is_inline_enabled, # 📊 3. 专属 Bot 是否已在官方开通内联 (True/False)
             "current_entrance_bot": entrance_bot   # 📊 4. 用户当前实际打开小程序的入口 Bot 名字 (自适应补全)
         }
-    }   
+    }
 
 def get_user_permission(user: dict) -> dict:
     """
@@ -1894,7 +1996,7 @@ def bind_tenant_custom_bot(data: BindBotInput, current_user: dict = Depends(get_
     try:
         set_wh_res = requests.post(
             f"https://api.telegram.org/bot{input_token}/setWebhook",
-            json={"url": webhook_target_url, "allowed_updates": ["inline_query", "message"]},
+            json={"url": webhook_target_url, "allowed_updates": ["inline_query", "message", "my_chat_member"]},
             timeout=5
         )
         if not set_wh_res.ok:
@@ -2305,7 +2407,8 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
         tg_file_id_str = str(tg_file_id or "").strip()
         
         payload = {
-            "chat_id": target_chat_id
+            "chat_id": target_chat_id,
+            "link_preview_options": {"is_disabled": True}
         }
         
         if reply_markup and reply_markup.get("inline_keyboard"):

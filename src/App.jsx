@@ -1598,19 +1598,23 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
 
                     <div className="flex flex-1 gap-4 items-center overflow-hidden">
                       {/* 🎬 视频/图片缩略图完美兼容区 */}
-                      {card.media_type === 'video' ? (
-                        <div className="w-20 h-20 rounded-xl shrink-0 bg-zinc-950 relative overflow-hidden border border-gray-100">
-                          <video src={`${card.img}#t=0.001`} className="w-full h-full object-cover opacity-80" preload="metadata" muted playsInline />
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                            <svg className="w-4 h-4 text-white/90 fill-current" viewBox="0 0 24 24">
-                              <path d="M8 5v14l11-7z"/>
-                            </svg>
+                      {/* 👇 核心改动：如果 media_type 是 text 或者压根没有图片链接，直接不渲染整个缩略图 DOM */}
+                      {card.media_type !== 'text' && card.img && (
+                        card.media_type === 'video' ? (
+                          <div className="w-20 h-20 rounded-xl shrink-0 bg-zinc-950 relative overflow-hidden border border-gray-100">
+                            <video src={`${card.img}#t=0.001`} className="w-full h-full object-cover opacity-80" preload="metadata" muted playsInline />
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                              <svg className="w-4 h-4 text-white/90 fill-current" viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z"/>
+                              </svg>
+                            </div>
                           </div>
-                        </div>
-                      ) : card.media_type === 'gif' ? (
-                        <img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
-                      ) : (
-                        <img src={card.img || "https://picsum.photos/200/120?random=default"} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                        ) : card.media_type === 'gif' ? (
+                          < img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                        ) : (
+                          /* 这里的 else 就纯粹只处理普通的 photo（图片）类型，不用再怕空数据了 */
+                          < img src={card.img} className="w-20 h-20 object-cover rounded-xl shrink-0 bg-slate-100" alt="" />
+                        )
                       )}
 
                       {/* 📝 右侧文字与状态指标区 */}
