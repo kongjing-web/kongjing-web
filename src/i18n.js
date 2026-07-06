@@ -496,26 +496,26 @@ const resources = {
       home: {
         gate: {
           unbound: {
-            title: "Upgrade to Independent Digital Base",
-            desc: "You have not bound your exclusive Bot yet. Configure an exclusive private tenant Bot to 'Save/Publish' cards and customize your brand name.",
-            btn: "Configure & Bind Now"
+            title: "Upgrade to Dedicated Digital Base",
+            desc: "You haven't linked your exclusive bot yet. Set up a private bot to unlock card saving/publishing and fully customize your branding.",
+            btn: "Link Your Bot Now"
           },
           inline_disabled: {
-            title: "Inline Sharing Mode Inactive",
-            desc: "Your exclusive Bot is bound, but advanced inline sharing capabilities are not yet activated.",
+            title: "Inline Sharing Disabled",
+            desc: "Your private bot is connected, but advanced inline mode hasn't been activated yet.",
             guide_title: "💡 Activation Guide (Takes only 10s):",
-            step1: "1. Message the official bot <1>@BotFather</1>",
+            step1: "1. Chat with the official <1>@BotFather</1>",
             step2: "2. Send command: <1>/setinline</1>",
             step3: "3. Select your Bot: <1>@{{username}}</1>",
-            btn: "Open @BotFather to Activate"
+            btn: "Open @BotFather"
           },
           entrance_mismatch: {
-            title: "Security Entrance Mismatch",
-            desc: "You are currently in full-feature preview mode. To 'Save/Publish' cards, please enter through your exclusive base.",
-            btn: "Enter Your Exclusive Private Bot"
+            title: "Access Portal Mismatch",
+            desc: "You are currently in view-only preview mode. To save or publish cards, please launch the app through your dedicated bot.",
+            btn: "Launch via Your Private Bot"
           },
           banner: {
-            text: "<0>💡 Currently viewing cross-platform via someone else's base. To publish cards, please return to </0><1>@{{username}}</1>"
+            text: "<0>💡 Browsing via external gateway. To publish cards, please return to </0><1>@{{username}}</1>"
           }
         }
       }
