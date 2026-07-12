@@ -33,53 +33,94 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('kongjing_entrance_bot', entranceBot);
   }
 
-  // 3. 核心黑魔法：劫持全局原生 fetch
+  // 3. 核心黑魔法：劫持全局原生 fetch (完美注入 + 自动无痕翻译响应)
   const originalFetch = window.fetch;
   window.fetch = async function (input, init) {
     let url = typeof input === 'string' ? input : input.url;
     const savedBot = sessionStorage.getItem('kongjing_entrance_bot');
 
-    // 4. 只要是发往你后端的接口（包含 /api/ 或者是相对路径 /user/...）
+    // 4. 发送时：参数与请求头注入
     if (savedBot && (url.includes('/api/') || url.startsWith('/'))) {
       try {
-        // --- 🗺️ 轨道 A：保留你原有的 URL 参数注入（双保险） ---
         const urlObj = new URL(url, window.location.origin);
         if (!urlObj.searchParams.has('entrance_bot')) {
           urlObj.searchParams.set('entrance_bot', savedBot);
         }
-        
         if (typeof input === 'string') {
           input = urlObj.toString();
         } else {
           input = new Request(urlObj.toString(), input);
         }
 
-        // --- 🚀 轨道 B：核心新增！全自动注入 X-Entrance-Bot 请求头 ---
-        // 确保配置载荷 init 存在
         init = init || {};
-        
-        // 智能兼容并防爆：判断已有的 headers 类型，动态追加自定义请求头，绝不覆盖老请求头（如 Authorization）
-        if (!init.headers) {
-          init.headers = {};
-        }
-
+        if (!init.headers) init.headers = {};
         if (init.headers instanceof Headers) {
-          // 如果是标准 Headers 对象
           init.headers.set('X-Entrance-Bot', savedBot);
         } else if (Array.isArray(init.headers)) {
-          // 如果是二维数组格式 [ ['Content-Type', 'application/json'] ]
           init.headers.push(['X-Entrance-Bot', savedBot]);
         } else {
-          // 如果是最常见的普通键值对对象 { 'Authorization': '...' }
           init.headers['X-Entrance-Bot'] = savedBot;
         }
-
       } catch (e) {
         console.error("【空境前端网关】URL 或 Headers 解析注入异常:", e);
       }
     }
-    // 执行原生的 fetch
-    return originalFetch(input, init);
+
+    // 执行请求拿到真实响应
+    const response = await originalFetch(input, init);
+
+    // 5. 🎯【核心大招】：返回给前端前，拦截并自动翻译
+    if (url.includes('/api/') || url.startsWith('/')) {
+      try {
+        // 克隆响应流防止被后续逻辑消费
+        const clone = response.clone();
+        const data = await clone.json();
+
+        if (data && typeof data === 'object') {
+          // 🛡️ 安全的全局翻译器探针，彻底告别 require 引起的运行时崩溃
+          const globalT = (key) => {
+            // 💡 提示：在你的 i18n.js 初始化完毕后，顺手写一句 window.i18nInstance = i18next 即可无缝对接
+            const i18n = window.i18next || window.i18nInstance;
+            return (i18n && typeof i18n.t === 'function') ? i18n.t(key) : key;
+          };
+
+          let modified = false;
+          
+          // 翻译常规业务 message
+          if (data.message && typeof data.message === 'string') {
+            data.message = globalT(data.message);
+            modified = true;
+          }
+          
+          // 翻译 FastAPI 特有的 HTTPException detail
+          if (data.detail && typeof data.detail === 'string') {
+            data.detail = globalT(data.detail);
+            modified = true;
+          }
+
+          // 如果成功篡改了提示，重包一个全新的 Response 返回给前端业务逻辑（保持原有状态码，通杀 200 和 400/429/500）
+          if (modified) {
+            return new Response(JSON.stringify(data), {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers
+            });
+          }
+        }
+      } catch (err) {
+        // 兜底：如果触发了 429 且由于某种原因未能解析为标准 JSON，我们直接手动包装一个带多语言的拦截对象
+        if (response.status === 429) {
+          const i18n = window.i18next || window.i18nInstance;
+          const fallbackMsg = i18n ? i18n.t("Request too frequent. Please do not click repeatedly.") : "Request too frequent. Please do not click repeatedly.";
+          return new Response(JSON.stringify({ detail: fallbackMsg, message: fallbackMsg }), {
+            status: 429,
+            headers: response.headers
+          });
+        }
+      }
+    }
+
+    return response;
   };
 }
 
@@ -518,7 +559,7 @@ export default function App() {
       <style>{editorStyles}</style>
       {loading && (
         <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center text-xs text-white font-medium">
-          <div className="bg-slate-800 px-4 py-2 rounded-xl shadow-md">同步中...</div>
+          <div className="bg-slate-800 px-4 py-2 rounded-xl shadow-md">{t('common_loading', '同步中...')}</div>
         </div>
       )}
 
@@ -1695,8 +1736,8 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                                 {formatCardTime(card.updated_at)}
                               </span>
                             )}
-                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === '已发布' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
-                              {card.status}
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${card.status === 'published' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
+                              {t(`status.${card.status}`)}
                             </span>
                           </div>
                         </div>
@@ -1809,7 +1850,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
             {directTargets.length > 0 && (
               <div className="mt-3">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                  常用历史渠道 (点击直接填入)
+                  {t('home_history_channels')}
                 </label>
                 {/* 限制最大高度，超出自动产生平滑滚动条，防止目标过多撑破弹窗 */}
                 <div className="flex flex-col gap-1.5 max-h-28 overflow-y-auto pr-1">
@@ -1825,10 +1866,10 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                       }`}
                     >
                       <span className="truncate max-w-[120px] font-medium">
-                        {target.chat_title || '未命名渠道'}
+                        {target.chat_title || t('home_unnamed_channel')}
                       </span>
                       <span className="text-[9px] font-mono opacity-60">
-                        {String(target.chat_id).startsWith('-100') ? '频道/群' : '个人'}
+                        {String(target.chat_id).startsWith('-100') ? t('home_channel_group') : t('home_channel_private')}
                       </span>
                     </button>
                   ))}

@@ -361,12 +361,12 @@ def init_db():
         # STEP 3. 基础数据入库与全局配置加载
         # =====================================================================
         
-        # 完美兼容 Postgres 的默认套餐初始化
+# 完美兼容 Postgres 的默认套餐初始化（统一为标准英文套餐名）
         cursor.execute("""
             INSERT INTO packages (package_id, name, duration_days, price_usd, price_stars) VALUES 
-            ('week', 'VIP周会员', 7, 2.99, 150),
-            ('month', 'VIP月会员', 30, 9.99, 500),
-            ('quarter', 'VIP季会员', 90, 26.99, 1350)
+            ('week', 'VIP Weekly Pass', 7, 2.99, 150),
+            ('month', 'VIP Monthly Pass', 30, 9.99, 500),
+            ('quarter', 'VIP Quarterly Pass', 90, 26.99, 1350)
             ON CONFLICT (package_id) DO NOTHING
         """)
 
@@ -507,7 +507,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "type": "video",
                     "id": result_id,
                     "video_file_id": tg_file_id_str, 
-                    "title": title or "精美可视化视频卡片",
+                    "title": title or "Visual Video Card",
                     "description": short_description,  
                     "caption": caption,
                     "parse_mode": "HTML",
@@ -518,7 +518,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "type": "gif",
                     "id": result_id,
                     "gif_file_id": tg_file_id_str,   
-                    "title": title or "精美动态卡片",
+                    "title": title or "Animated Card",
                     "description": short_description,  
                     "caption": caption,
                     "parse_mode": "HTML",
@@ -529,7 +529,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
                     "type": "photo",
                     "id": result_id,
                     "photo_file_id": tg_file_id_str, 
-                    "title": title or "精美可视化卡片",
+                    "title": title or "Visual Card",
                     "description": short_description,  
                     "caption": caption,
                     "parse_mode": "HTML",
@@ -541,7 +541,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
             inline_result = {
                 "type": "photo",
                 "id": result_id,
-                "title": title or "精美可视化卡片",
+                "title": title or "Visual Card",
                 "description": short_description,      
                 "photo_url": img,
                 "thumb_url": img,
@@ -554,7 +554,7 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
         inline_result = {
             "type": "article",
             "id": result_id,
-            "title": title or "精美可视化卡片",
+            "title": title or "Visual Article",
             "description": short_description,          
             "input_message_content": {
                 "message_text": caption,
@@ -745,15 +745,15 @@ async def telegram_support_webhook_router(request: Request, background_tasks: Ba
 
                 # C. 渲染发送工业黑金极简风的【用户信息置顶卡片】
                 card_html = (
-                    f"<b>🎴 【空境工单系统 · 用户置顶卡片】</b>\n"
+                    f"<b>🎴 【KONGJING TICKET SYSTEM · USER PROFILE】</b>\n"
                     f"<code>───────────────────</code>\n"
-                    f"👤 <b>用户昵称:</b> {clean_first_name}\n"  # 👈 使用了清洗后的安全昵称
-                    f"🆔 <b>用户 ID:</b> <code>{user_id}</code>\n"
-                    f"🏷️ <b>平台账号:</b> {user_info['username']}\n"
-                    f"💎 <b>账户身份:</b> {user_info['identity']}\n"
-                    f"💰 <b>账户余额:</b> <code>{user_info['balance']}</code>\n"
+                    f"👤 <b>Name:</b> {clean_first_name}\n"
+                    f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
+                    f"🏷️ <b>Username:</b> {user_info['username']}\n"
+                    f"💎 <b>Identity:</b> {user_info['identity']}\n"
+                    f"💰 <b>Balance:</b> <code>{user_info['balance']}</code>\n"
                     f"<code>───────────────────</code>\n"
-                    f"💡 <i>提示：在此话题内直接回复，内容将全自动同步回该用户私聊。</i>"
+                    f"💡 <i>Tip: Reply directly in this topic to sync messages back to the user via PM.</i>"
                 )
                 
                 send_card_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
@@ -855,7 +855,7 @@ async def process_successful_payment(message_data: dict) -> bool:
             # 反查动态配置的天数
             cursor.execute("SELECT duration_days FROM orders WHERE order_id = %s", (order_id,))
             order_row = cursor.fetchone()
-            duration_days = order_row[0] if (order_row and order_row[0]) else 7
+            duration_days = order_row[0] if order_row else 7
             
             cursor.execute("UPDATE orders SET status = 'completed' WHERE order_id = %s", (order_id,))
             
@@ -1041,7 +1041,7 @@ async def telegram_webhook_router(request: Request, background_tasks: Background
         
     except Exception as e:
         print(f"[Webhook中央网关异常]: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "Webhook中央网关异常，请稍后重试"}
     
         
 # ==============================================================================
@@ -1762,7 +1762,8 @@ def _send_telegram_media(chat_id: str, bot_token: str, media_type: str, media_so
 
     response = requests.post(f"{telegram_api_base}/{endpoint}", json=payload, timeout=20)
     if not response.ok:
-        raise HTTPException(status_code=400, detail=f"Telegram发送失败: {response.text}")
+        print(f"[错误] Telegram发送失败: {response.text}")
+        raise HTTPException(status_code=400, detail="Telegram发送失败，请稍后重试")
     return response.json()
 
 def calculate_prices():
@@ -1839,7 +1840,8 @@ def get_current_prices():
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"拉取后台最新调控价格失败: {str(e)}")
+        logging.exception("Failed to fetch latest pricing from backend")
+        raise HTTPException(status_code=500, detail="拉取后台最新调控价格失败，请稍后重试")
 
 @app.post("/upload/chunk")
 async def upload_chunk(
@@ -1989,7 +1991,8 @@ def bind_tenant_custom_bot(data: BindBotInput, current_user: dict = Depends(get_
         bot_username = bot_info.get("username")
     except Exception as e:
         if isinstance(e, HTTPException): raise
-        raise HTTPException(status_code=502, detail=f"与 Telegram 网关握手超时，请稍后重试: {str(e)}")
+        logging.exception("Failed to verify bot token")
+        raise HTTPException(status_code=502, detail="与 Telegram 网关握手超时，请稍后重试")
 
     # 2. 自动化全面调拨中央网关 Webhook
     webhook_target_url = f"{API_BASE_URL}/tg/webhook/{telegram_id}"
@@ -2000,10 +2003,12 @@ def bind_tenant_custom_bot(data: BindBotInput, current_user: dict = Depends(get_
             timeout=5
         )
         if not set_wh_res.ok:
-            raise HTTPException(status_code=400, detail=f"多渠道网关配置下发失败: {set_wh_res.text}")
+            logging.exception("Failed to set webhook")
+            raise HTTPException(status_code=400, detail="多渠道网关配置下发失败")
     except Exception as e:
         if isinstance(e, HTTPException): raise
-        raise HTTPException(status_code=500, detail=f"路由管道嫁接异常: {str(e)}")
+        logging.exception("Failed to set webhook")
+        raise HTTPException(status_code=500, detail="路由管道嫁接异常，请稍后重试")
 
     # 3. 智能多维度塑造小程序入口方案
     # 安全闭环设计：URL 仅添加安全标记后缀 bot_username，绝不暴露明文 Token 规避泄露风险
@@ -2016,7 +2021,7 @@ def bind_tenant_custom_bot(data: BindBotInput, current_user: dict = Depends(get_
             json={
                 "menu_button": {
                     "type": "web_app",
-                    "text": "打开小程序",
+                    "text": "Open App",
                     "web_app": {"url": frontend_webapp_url}
                 }
             },
@@ -2028,7 +2033,7 @@ def bind_tenant_custom_bot(data: BindBotInput, current_user: dict = Depends(get_
             f"https://api.telegram.org/bot{input_token}/setMyCommands",
             json={
                 "commands": [
-                    {"command": "start", "description": "弹出可视化卡片编辑器面板"}
+                    {"command": "start", "description": "Open Visual Editor"}
                 ]
             },
             timeout=5
@@ -2142,12 +2147,22 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                         # ----------------------------------------------------------------------
                         has_media = db_img != ""
                         tg_limit = 1024 if has_media else 4096
+
                         if len(pure_text) > tg_limit:
-                            media_desc = "带有媒体（图片/视频/GIF）的卡片" if has_media else "纯文本卡片"
-                            raise HTTPException(
-                                status_code=400, 
-                                detail=f"保存失败：当前卡片为【{media_desc}】且处于【已发布】状态，实际更新文本（当前 {len(pure_text)} 字）不能超过官方规定的 {tg_limit} 个字符限制！"
-                            )
+                            # 🎯 依然在后台日志里留下详细的字数，方便万一有客诉时对账
+                            logging.warning(f"字数超限拦截 -> 媒体状态: {has_media}, 实际字数: {len(pure_text)}")
+                            
+                            # 🎯 根据有图/无图，直接给前端抛出纯文本的固定提示，去掉所有动态大括号！
+                            if has_media:
+                                raise HTTPException(
+                                    status_code=400, 
+                                    detail="保存失败：图文或媒体卡片的更新文本已超过 Telegram 官方规定的 1024 字符限制！"
+                                )
+                            else:
+                                raise HTTPException(
+                                    status_code=400, 
+                                    detail="保存失败：纯文本卡片的更新文本已超过 Telegram 官方规定的 4069 字符限制！"
+                                )
                         # ----------------------------------------------------------------------
 
                         final_tg_file_id = old_tg_file_id
@@ -2224,7 +2239,8 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"数据库保存异常: {str(e)}")
+        print(f"[错误] 数据库保存异常: {str(e)}")
+        raise HTTPException(status_code=500, detail="数据库保存异常")
 
     return {"code": 200, "status": "success", "message": "卡片保存成功", "id": card_id}
 
@@ -2342,7 +2358,8 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"发布预查询失败: {str(e)}")
+        print(f"[错误] 发布预查询失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="发布预查询失败，请稍后重试")
 
     now_ts = int(time.time())
     current_month = datetime.utcfromtimestamp(now_ts).strftime('%Y-%m')
@@ -2510,7 +2527,8 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
         except Exception as tg_err:
             if isinstance(tg_err, HTTPException):
                 raise tg_err
-            raise HTTPException(status_code=500, detail=f"与 Telegram 通信失败: {str(tg_err)}")
+            print(f"[错误] 与 Telegram 通信失败: {str(tg_err)}")
+            raise HTTPException(status_code=500, detail="与 Telegram 通信失败，请稍后重试")
 
     # ==========================================
     # 💾 激活存储与配额扣减（两套模式共享此中心）
@@ -2577,8 +2595,9 @@ def get_user_publish_targets(current_user: dict = Depends(get_current_tg_user)):
                 "data": targets      # 💡 留一个底牌备份，双重保险防空
             }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"拉取历史常用渠道失败: {str(e)}")
-    
+        print(f"[错误] 拉取历史常用渠道失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="拉取历史常用渠道失败")
+
 # 4. 用户登录接口（【严格保留原有变量对齐方案】）
 @app.post("/user/login")
 def user_login(current_user: dict = Depends(get_current_tg_user)):
@@ -2658,7 +2677,8 @@ async def get_custom_emojis():
             result = [{"emoji_id": row[0], "fallback_char": row[1]} for row in rows]
             return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取自定义表情库失败: {str(e)}")
+        print(f"[错误] 获取自定义表情库失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="获取自定义表情库失败")
 
 # ==========================================
 # 管理员专用接口
@@ -2873,76 +2893,81 @@ def get_announcement():
 async def create_stars_invoice(request: Request, current_user: dict = Depends(get_current_tg_user)):
     """
     【严防死守 + 多套餐动态版】创建官方星星支付链接
-    Depends(get_current_tg_user) 强行在请求头解密验签 initData，保证身份绝对真实！
     """
     try:
         body = await request.json()
         body_tg_id = str(body.get("telegram_id", ""))
-        # 🎯 动态获取前端传入的套餐 ID，默认降级为 week
         package_id = str(body.get("package_id") or body.get("packageId") or "week").strip().lower()
     except Exception:
         body_tg_id = ""
         package_id = "week"
         
-    # 🚨【完美保留核心鉴权】：比对解密出来的 token 拥有者 ID 是否与前端 Body 上报的 ID 一致，防止越权并发欺诈
     token_tg_id = str(current_user.get("id") or current_user.get("telegram_id") or "")
     if body_tg_id and token_tg_id and body_tg_id != token_tg_id:
         raise HTTPException(status_code=403, detail="安全合规校验未通过：身份凭证不匹配")
 
-    # 🎯 核心动态联动：每次创单都实时去 packages 表查出对应的天数和价格，达成“随时改价”
-    with get_db_connection() as (_, cursor):
-        cursor.execute(
-            "SELECT name, price_usd, price_stars, duration_days FROM packages WHERE package_id = %s",
-            (package_id,)
-        )
-        pkg_row = cursor.fetchone()
-        if not pkg_row:
-            raise HTTPException(status_code=400, detail="未找到指定的套餐配置，请检查 package_id")
-        
-        pkg_name, price_usd, db_price_stars, duration_days = pkg_row
+    # 🎯 【新增：Redis 防连击锁】
+    # 限制同一个用户 3 秒内只能请求一次创单
+    lock_key = f"lock:create_order:stars:{token_tg_id}"
+    is_locked = r_cache.set(lock_key, "1", ex=3, nx=True)
+    if not is_locked:
+        raise HTTPException(status_code=429, detail="Request too frequent. Please do not click repeatedly.")
 
-    # 🧭 计价裁决：如果数据库填了特定的星星数就用数据库的，没填(或为0)就根据USDT动态算
-    if db_price_stars and db_price_stars > 0:
-        stars_amount = db_price_stars
-    else:
-        stars_amount = auto_calculate_stars(price_usd)
-    
-    order_id = f"STARS_{token_tg_id}_{int(time.time())}"
-    
-    # 组装请求 TG 官方创建发票的载荷
-    tg_api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/createInvoiceLink"
-    payload = {
-        "title": f"空境系统 - {pkg_name}",
-        "description": f"享受高级会员专属特权（有效期 {duration_days} 天，含官方渠道税点补贴）",
-        "payload": json.dumps({"order_id": order_id, "user_id": token_tg_id}),
-        "provider_token": "",  # ⭐️ 官方 Stars 支付此处必须留空字符串
-        "currency": "XTR",     # ⭐️ XTR 代表 Telegram Stars
-        "prices": [
-            {"label": f"{pkg_name}订阅", "amount": stars_amount}
-        ]
-    }
-    
     try:
+        # 🎯 核心动态联动：每次创单都实时去 packages 表查出对应的天数和价格
+        with get_db_connection() as (_, cursor):
+            cursor.execute(
+                "SELECT name, price_usd, price_stars, duration_days FROM packages WHERE package_id = %s",
+                (package_id,)
+            )
+            pkg_row = cursor.fetchone()
+            if not pkg_row:
+                raise HTTPException(status_code=400, detail="未找到指定的套餐配置，请检查 package_id")
+            
+            pkg_name, price_usd, db_price_stars, duration_days = pkg_row
+
+        if db_price_stars and db_price_stars > 0:
+            stars_amount = db_price_stars
+        else:
+            stars_amount = auto_calculate_stars(price_usd)
+        
+        order_id = f"STARS_{token_tg_id}_{int(time.time())}"
+        
+        tg_api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/createInvoiceLink"
+        payload = {
+            "title": f"KongJing System - {pkg_name}",
+            "description": f"Enjoy Premium membership privileges (Valid for {duration_days} days)",
+            "payload": json.dumps({"order_id": order_id, "user_id": token_tg_id}),
+            "provider_token": "",  
+            "currency": "XTR",     
+            "prices": [
+                {"label": f"{pkg_name} Subscription", "amount": stars_amount}
+            ]
+        }
+        
         res = requests.post(tg_api_url, json=payload, timeout=5)
         res_json = res.json()
         if not res_json.get("ok"):
-            raise HTTPException(status_code=500, detail=f"TG官方收银台激活失败: {res_json.get('description')}")
-            
+            logging.error(f"TG官方收银台激活失败: {res_json.get('description')}")
+            raise HTTPException(status_code=500, detail="TG官方收银台激活失败")
+
         pay_url = res_json["result"]
         
-        # 🎯 核心修复：使用下划线 `_` 让管家隐式接管事务，并把 package_id 和 duration_days 完美压入 orders 表留底
         with get_db_connection() as (_, cursor):
             cursor.execute(
                 """
                 INSERT INTO orders (order_id, user_id, amount, status, crypto_invoice_id, pay_url, package_id, duration_days)
-                VALUES (%s, %s, %s, 'pending', %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (order_id, token_tg_id, float(stars_amount), "STARS_PAYING", pay_url, package_id, duration_days)
+                (order_id, token_tg_id, float(stars_amount), 'pending', "STARS_PAYING", pay_url, package_id, duration_days)
             )
             
         return {"status": "success", "pay_url": pay_url, "order_id": order_id}
+    except HTTPException:
+        raise  # 业务主动抛出的 400/403/429 异常，直接让 FastAPI 返回给前端
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"创建星星发票失败: {str(e)}")
+        logging.error(f"创建星星发票失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="创建星星发票失败")
 
 
 @app.post("/vip/create_invoice")
@@ -2967,57 +2992,64 @@ async def create_invoice(data: dict, req: Request):
 
     if not telegram_id or telegram_id == "undefined" or telegram_id == "null":
         raise HTTPException(status_code=400, detail="认证失败，无法获取合法的 Telegram ID，请重新打开小程序")
+
+    # 🎯 【新增：Redis 防连击锁】
+    # 限制同一个用户 3 秒内只能请求一次 Crypto 创单
+    lock_key = f"lock:create_order:crypto:{telegram_id}"
+    is_locked = r_cache.set(lock_key, "1", ex=3, nx=True)
+    if not is_locked:
+        raise HTTPException(status_code=429, detail="Request too frequent. Please do not click repeatedly.")
  
     package_id = str(data.get("package_id") or data.get("packageId") or "week").strip().lower()
     
-    # 🎯【优化 1】：换成下划线 _，利用智能管家自动控制生命周期
-    with get_db_connection() as (_, cursor): 
-        # 🎯【核心修复】：对齐 2.0 表结构，将 id 改为 package_id
-        cursor.execute(
-            "SELECT name, price_usd, duration_days FROM packages WHERE package_id = %s", 
-            (package_id,)
-        )
-        pkg_row = cursor.fetchone()
-        if not pkg_row:
-            raise HTTPException(status_code=400, detail="未找到指定的套餐配置，请检查 package_id")
-        
-        pkg_name, price_usd, duration_days = pkg_row
-
-    local_order_id = f"ORDER_{int(time.time())}_{uuid.uuid4().hex[:6].upper()}"
-    amount = price_usd  
-    
-    crypto_pay_url = "https://pay.crypt.bot/api/createInvoice" 
-    headers = {
-        "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "asset": "USDT",
-        "amount": str(amount),
-        "description": f"空境系统 - {pkg_name}({duration_days}天)",  
-        "hidden_message": "感谢您的支持！您的会员已自动延期。",
-        "paid_btn_name": "callback",  
-        "paid_btn_url": "https://t.me/kongjing_service_bot", 
-        "payload": local_order_id  
-    }
-    
     try:
+        # 🎯【优化 1】：换成下划线 _，利用智能管家自动控制生命周期
+        with get_db_connection() as (_, cursor): 
+            cursor.execute(
+                "SELECT name, price_usd, duration_days FROM packages WHERE package_id = %s", 
+                (package_id,)
+            )
+            pkg_row = cursor.fetchone()
+            if not pkg_row:
+                raise HTTPException(status_code=400, detail="未找到指定的套餐配置，请检查 package_id")
+            
+            pkg_name, price_usd, duration_days = pkg_row
+
+        local_order_id = f"ORDER_{int(time.time())}_{uuid.uuid4().hex[:6].upper()}"
+        amount = price_usd  
+        
+        crypto_pay_url = "https://pay.crypt.bot/api/createInvoice" 
+        headers = {
+            "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "asset": "USDT",
+            "amount": str(amount),
+            "description": f"KongJing System - {pkg_name} ({duration_days} Days)",  
+            "hidden_message": "Thank you for your support! Your membership has been automatically extended.",
+            "paid_btn_name": "callback",  
+            "paid_btn_url": "https://t.me/kongjing_service_bot", 
+            "payload": local_order_id  
+        }
+        
         response = requests.post(crypto_pay_url, json=payload, headers=headers, timeout=15)
         if not response.ok:
-            raise HTTPException(status_code=500, detail=f"CryptoBot 接口报错: {response.text}")
+            logging.error(f"CryptoBot 接口报错: {response.text}")
+            raise HTTPException(status_code=500, detail="CryptoBot 接口报错")
             
         res_json = response.json()
         if not res_json.get("ok"):
-            raise HTTPException(status_code=500, detail=f"CryptoBot 创建失败: {res_json.get('error')}")
+            logging.error(f"CryptoBot 创建失败: {res_json.get('error')}")
+            raise HTTPException(status_code=500, detail="CryptoBot 创建失败")
             
         result_data = res_json.get("result", {})
         crypto_invoice_id = str(result_data.get("invoice_id"))
         pay_url = result_data.get("mini_app_invoice_url") or result_data.get("pay_url")
       
-        # 🎯【优化 2】：这里同样换成下划线 _，彻底拿掉冗余的手动 commit 代码
+        # 🎯【优化 2】：这里同样换成下划线 _
         with get_db_connection() as (_, cursor):
-            # 💡 orders 表字段叫 user_id，传入的值是 telegram_id，这是完美的 2.0 规范
             cursor.execute(
                 """
                 INSERT INTO orders (order_id, user_id, amount, status, crypto_invoice_id, pay_url, package_id, duration_days)
@@ -3025,13 +3057,14 @@ async def create_invoice(data: dict, req: Request):
                 """,
                 (local_order_id, telegram_id, amount, crypto_invoice_id, pay_url, package_id, duration_days)
             )
-            # 👈 原来的 try: conn.commit() except: pass 已被管家隐式接管，安全删除！
             
         return {"pay_url": pay_url, "order_id": local_order_id}
         
+    except HTTPException:
+        raise  # 主动抛出的异常放行
     except Exception as e:
-        print(f"[支付创建异常]: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"创建支付发票失败: {str(e)}")
+        logging.error(f"[支付创建异常]: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="创建支付发票失败，请稍后重试")
 
 
 # 🚀 新增：Crypto Bot 异步支付成功回调 Webhook 接口
@@ -3056,7 +3089,7 @@ async def crypto_bot_webhook(request: Request):
         calculated_sig = hmac.new(secret_key, body_bytes, hashlib.sha256).hexdigest()
         
         if not hmac.compare_digest(calculated_sig, tg_signature):
-            print("[安全警告] 收到非法伪造的 Crypto 支付回调签名！")
+            logging.warning("[安全警告] 收到非法伪造的 Crypto 支付回调签名！")
             return {"code": 403, "message": "Invalid signature"}
             
         # 检查事件类型是否为支付成功
@@ -3081,7 +3114,7 @@ async def crypto_bot_webhook(request: Request):
                     duration_days = order_row[2] if (len(order_row) > 2 and order_row[2]) else 7 
                     
                     # 1. 更新订单状态
-                    cursor.execute("UPDATE orders SET status = 'completed' WHERE order_id = %s", (local_order_id,))
+                    duration_days = order_row[2] if (order_row and order_row[2] is not None) else 7
                     
                     # 2. 传入动态获取到的天数，发放 VIP 权益
                     grant_vip_equity(cursor, user_id, duration_days)
@@ -3094,8 +3127,8 @@ async def crypto_bot_webhook(request: Request):
                     
         return {"code": 200, "status": "success"}
     except Exception as e:
-        print(f"[Webhook处理异常]: {traceback.format_exc()}")
-        return {"code": 500, "message": str(e)}
+        logging.error(f"[Webhook处理异常]: {traceback.format_exc()}")
+        return {"code": 500, "message": "Webhook处理异常，请稍后重试"}
 
 @app.get("/click")
 def click_redirect(card_id: str, button_id: str, redirect: str):
@@ -3119,7 +3152,8 @@ async def fetch_bot_username(bot_token: str):
     telegram_api = f"https://api.telegram.org/bot{bot_token}/getMe"
     response = await run_in_threadpool(partial(requests.get, telegram_api, timeout=15))
     if not response.ok:
-        raise HTTPException(status_code=400, detail=f"Bot Token 无效或 Telegram 返回异常: {response.text}")
+        print(f"[错误] Telegram getMe 接口返回异常: {response.status_code} - {response.text}")
+        raise HTTPException(status_code=400, detail="Bot Token 无效或 Telegram 返回异常")
     data = response.json()
     result = data.get('result') or {}
     username = result.get('username') or result.get('first_name')
@@ -3251,4 +3285,5 @@ def delete_card(card_id: str, current_user: dict = Depends(get_current_tg_user))
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"安全切除事务异常: {str(e)}")
+        logging.error(f"[安全切除事务异常]: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="安全切除事务异常，请稍后重试")
