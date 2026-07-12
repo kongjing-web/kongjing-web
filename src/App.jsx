@@ -1210,18 +1210,27 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     }
   };
 
-  // ==========================================
+// ==========================================
   // 👑 模式二：Direct Message (直发消息投递)
   // ==========================================
   const handlePublishDirectSubmit = async () => {
+    // 检查 TG 环境
+    const isTgEnv = typeof window !== 'undefined' && window.Telegram?.WebApp;
+
     if (!targetChatId || !targetChatId.trim()) {
-      alert("请输入合法的目标群组用户名、频道 ID 或聊天 ID");
+      if (isTgEnv) {
+        window.Telegram.WebApp.showAlert("请输入合法的目标群组用户名、频道 ID 或聊天 ID");
+      } else {
+        alert("请输入合法的目标群组用户名、频道 ID 或聊天 ID");
+      }
       return;
     }
-    if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
+
+    if (!isTgEnv) {
       alert('请在 Telegram 真实环境中打开');
       return;
     }
+
     try {
       const initData = window.Telegram.WebApp.initData;
       const response = await fetch('https://www.kongjing.online/api/publish', {
@@ -1239,18 +1248,21 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       const result = await response.json();
 
       if (!response.ok || result.status !== 'success') {
-        alert(result.detail || result.message || '直发投递失败');
+        const errMsg = result.detail || result.message || '直发投递失败';
+        window.Telegram.WebApp.showAlert(errMsg);
         return;
       }
 
-      alert(result.message || '卡片已直接穿透投递到目标渠道！');
+      // 🎯【核心修复】：替换原本的 alert，使用 TG 原生无域名弹窗
+      window.Telegram.WebApp.showAlert(result.message || '卡片已直接穿透投递到目标渠道！');
+
       setDirectTargets([]);
       setPublishingCardForDirect(null);
       setTargetChatId('');
       if (fetchCards) fetchCards(); // 刷新卡片状态
     } catch (error) {
       console.error("直接发送失败:", error);
-      alert("直发请求失败，请检查网络或后端网关状态");
+      window.Telegram.WebApp.showAlert("直发请求失败，请检查网络或后端网关状态");
     }
   };
 

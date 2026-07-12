@@ -1850,7 +1850,7 @@ async def upload_chunk(
     filename: str = Form(...),
 ):
     if total_chunks <= 0 or chunk_index < 0 or chunk_index >= total_chunks:
-        raise HTTPException(status_code=400, detail="分片索引或总片数无效")
+        raise HTTPException(status_code=400, detail="Upload failed: Invalid chunks.")
 
     tmp_folder = os.path.join(UPLOAD_DIR, 'tmp', _sanitize_filename(upload_id))
     os.makedirs(tmp_folder, exist_ok=True)
@@ -1860,14 +1860,14 @@ async def upload_chunk(
         with open(chunk_path, 'wb') as chunk_file:
             chunk_file.write(await file_chunk.read())
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"分片写入失败: {exc}")
+        raise HTTPException(status_code=500, detail="Upload failed: Write error.")
 
     # 当最后一片上传完成后，开始合并压缩
     if chunk_index == total_chunks - 1:
         try:
             final_filename = await run_in_threadpool(_merge_and_compress_chunks, upload_id, filename, total_chunks)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"文件合并压缩失败: {str(exc)}")
+            raise HTTPException(status_code=500, detail="Upload failed: Merge error.")
         
         # 【核心修复】：做全兼容返回，不管前端取 url 还是 local_media_url，都能完美拿到
         final_url = _build_upload_urls(final_filename)
@@ -1894,7 +1894,7 @@ def upload_file(file: UploadFile = File(...)):
     is_gif = filename_lower.endswith('.gif') or content_type_lower == 'image/gif'
     
     if not (is_image or is_gif):
-        raise HTTPException(status_code=400, detail="仅支持图片和 GIF 上传（视频请走分片上传接口）")
+        raise HTTPException(status_code=400, detail="仅支持图片和 GIF 上传")
 
     # 2. ⚙️ 提取并规范化后缀
     ext = os.path.splitext(filename_lower)[1]
@@ -1927,7 +1927,7 @@ def upload_file(file: UploadFile = File(...)):
     except Exception as exc:
         if os.path.exists(file_path):
             os.remove(file_path)
-        raise HTTPException(status_code=500, detail=f"文件保存失败: {exc}")
+        raise HTTPException(status_code=500, detail="文件保存失败")
 
     final_url = f"https://www.kongjing.online/uploads/{file_name}"
     return {
@@ -2130,7 +2130,7 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                     if owner_id != incoming_user_id and incoming_user_id != admin_super_id:
                         raise HTTPException(status_code=403, detail="您没有修改此卡片的权限")
 
-                    if current_status == "已发布":
+                    if current_status == "published":
                         if db_img != str(old_img or "").strip() or media_type != old_media_type:
                             raise HTTPException(
                                 status_code=400, 
@@ -2207,7 +2207,7 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                         INSERT INTO cards (card_id, title, content, img, buttons, media_type, status, user_id, tg_file_id, bot_username, created_at, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id, final_tg_file_id, active_bot_username, current_timestamp, current_timestamp),
+                        (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "draft", incoming_user_id, final_tg_file_id, active_bot_username, current_timestamp, current_timestamp),
                     )
             else:
                 import random, string
@@ -2219,7 +2219,7 @@ def save_card(data: CardInput, current_user: dict = Depends(get_current_tg_user)
                     INSERT INTO cards (card_id, title, content, img, buttons, media_type, status, user_id, tg_file_id, bot_username, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "草稿", incoming_user_id, final_tg_file_id, active_bot_username, current_timestamp, current_timestamp),
+                    (card_id, data.title, data.content, db_img, db_buttons_str, media_type, "draft", incoming_user_id, final_tg_file_id, active_bot_username, current_timestamp, current_timestamp),
                 )
     except HTTPException:
         raise
@@ -2505,7 +2505,7 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
     # ==========================================
     with get_db_connection() as (_, cursor):
         # 🎯【修复 1-B】: 将 UPDATE 语句里的 WHERE id = %s 修正为 WHERE card_id = %s
-        cursor.execute("UPDATE cards SET status = %s WHERE card_id = %s", ("已发布", card_id))
+        cursor.execute("UPDATE cards SET status = %s WHERE card_id = %s", ("published", card_id))
         
         # 🎯【修复 4】: 将原本致命错误的 not is_vip 修正为标准的权限判断结果 not owner_perm["is_vip"]
         if role != 'superuser' and not owner_perm["is_vip"]:
