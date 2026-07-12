@@ -1171,7 +1171,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
         setActiveCardId(null);
       } catch (error) {
         console.error("批量删除异常:", error);
-        alert("删除执行完毕，部分卡片可能由于网络波动未被彻底清除，请刷新重试");
+        alert(t('error_batch_delete_failed') || "删除执行完毕，部分卡片可能由于网络波动未被彻底清除，请刷新重试");
         if (fetchCards) fetchCards();
       }
     }
@@ -1182,7 +1182,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
   // ==========================================
   const handlePublishInline = async (card) => {
     if (typeof window === 'undefined' || !window.Telegram?.WebApp) {
-      alert('请在 Telegram 真实环境中打开');
+      alert(t('error_not_in_tg') || '请在 Telegram 真实环境中打开');
       return;
     }
     try {
@@ -1198,7 +1198,8 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       const result = await response.json();
 
       if (!response.ok || result.status !== 'success') {
-        alert(result.detail || result.message || '激活失败');
+        const errMsg = result.detail || result.message || t('error_inline_activate_failed') || '激活失败';
+        window.Telegram.WebApp.showAlert(errMsg);
         return;
       }
 
@@ -1206,7 +1207,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       window.Telegram.WebApp.switchInlineQuery(inlineQueryText, ["users", "groups", "channels"]);
     } catch (error) {
       console.error("内联模式发布失败:", error);
-      alert("网络请求异常，请检查后端服务");
+      window.Telegram.WebApp.showAlert(t('error_network_exception') || "网络请求异常，请检查后端服务");
     }
   };
 
@@ -1218,16 +1219,19 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     const isTgEnv = typeof window !== 'undefined' && window.Telegram?.WebApp;
 
     if (!targetChatId || !targetChatId.trim()) {
+      // 🎯【i18n 修复】
+      const inputErrorMsg = t('error_invalid_target_id') || "请输入合法的目标群组用户名、频道 ID 或聊天 ID";
       if (isTgEnv) {
-        window.Telegram.WebApp.showAlert("请输入合法的目标群组用户名、频道 ID 或聊天 ID");
+        window.Telegram.WebApp.showAlert(inputErrorMsg);
       } else {
-        alert("请输入合法的目标群组用户名、频道 ID 或聊天 ID");
+        alert(inputErrorMsg);
       }
       return;
     }
 
     if (!isTgEnv) {
-      alert('请在 Telegram 真实环境中打开');
+      // 🎯【i18n 修复】
+      alert(t('error_not_in_tg') || '请在 Telegram 真实环境中打开');
       return;
     }
 
@@ -1248,13 +1252,19 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       const result = await response.json();
 
       if (!response.ok || result.status !== 'success') {
-        const errMsg = result.detail || result.message || '直发投递失败';
-        window.Telegram.WebApp.showAlert(errMsg);
-        return;
-      }
+              // 1. 提取出后端传回来的干净错误描述（如 "Telegram 拒绝投递: Bad Request: chat not found"）
+              const rawErrMsg = result.detail || result.message || 'error_direct_failed';
+              
+              // 2. 🎯【小布丁核心】：丢进 t() 里面。如果语言包配了这句话，就显示漂亮的中文解释；没配就显示原句 rawErrMsg
+              const finalAlertMsg = t(rawErrMsg, rawErrMsg);
+              
+              window.Telegram.WebApp.showAlert(finalAlertMsg);
+              return;
+            }
 
       // 🎯【核心修复】：替换原本的 alert，使用 TG 原生无域名弹窗
-      window.Telegram.WebApp.showAlert(result.message || '卡片已直接穿透投递到目标渠道！');
+      const successMsg = result.message || t('success_direct_published') || '卡片已直接穿透投递到目标渠道！';
+      window.Telegram.WebApp.showAlert(successMsg);
 
       setDirectTargets([]);
       setPublishingCardForDirect(null);
@@ -1262,7 +1272,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
       if (fetchCards) fetchCards(); // 刷新卡片状态
     } catch (error) {
       console.error("直接发送失败:", error);
-      window.Telegram.WebApp.showAlert("直发请求失败，请检查网络或后端网关状态");
+      window.Telegram.WebApp.showAlert(t('error_gateway_failed') || "直发请求失败，请检查网络或后端网关状态");
     }
   };
 

@@ -80,6 +80,20 @@ const resources = {
       home_deselect_all: "取消全选",
       home_batch_delete_confirm: "确定要批量删除选中的 {{count}} 张卡片吗？",
 
+      error_not_in_tg: "请在 Telegram 真实环境中打开",
+      error_invalid_target_id: "请输入合法的目标群组用户名、频道 ID 或聊天 ID",
+      error_inline_activate_failed: "激活失败",
+      error_direct_failed: "直发投递失败",
+      error_network_exception: "网络请求异常，请检查后端服务",
+      error_gateway_failed: "直发请求失败，请检查网络或后端网关状态",
+      success_direct_published: "卡片已成功直接投递到您的目标渠道！",
+      success_inline_activated: "内联模式已成功激活，您可以在任意群组或频道中使用 @{{username}} 进行卡片发布了！",   
+
+      "Telegram 拒绝投递: Forbidden: bot can't initiate conversation with a user": "投递失败：目标用户未激活 Bot，请让他先在 TG 中点击 Start 按钮。",
+      "Telegram 拒绝投递: Bad Request: chat not found": "投递失败：找不到该群组或频道，请检查 ID 或用户名是否填写正确。",
+      "Telegram 拒绝投递: Bad Request: need administrator rights in the channel": "投递失败：Bot 在该频道中不是管理员，请先提升其为管理员并赋予发帖权限。",
+      "Telegram 拒绝投递: Forbidden: bot was kicked from the channel/group chat": "投递失败：Bot 已被该渠道踢出。",
+
       // === admin 后台管理模块 ===
       admin_dashboard_title: "全局管理后台",
       admin_system_name: "空境系统",
@@ -339,6 +353,11 @@ const resources = {
       home_select_all: "Select All",
       home_deselect_all: "Deselect All",
       home_batch_delete_confirm: "Are you sure you want to delete the selected {{count}} cards?",
+
+      "Telegram 拒绝投递: Forbidden: bot can't initiate conversation with a user": "Delivery failed: The target user has not activated the bot. Please ask them to click 'Start' in the bot first.",
+      "Telegram 拒绝投递: Bad Request: chat not found": "Delivery failed: Chat not found. Please check if the ID or username is entered correctly.",
+      "Telegram 拒绝投递: Bad Request: need administrator rights in the channel": "Delivery failed: The bot is not an administrator in this channel. Please promote it and grant posting permissions first.",
+      "Telegram 拒绝投递: Forbidden: bot was kicked from the channel/group chat": "Delivery failed: The bot has been kicked from this channel or group.",      
 
       // === admin 后台管理模块 ===
       admin_dashboard_title: "Global Admin Dashboard",

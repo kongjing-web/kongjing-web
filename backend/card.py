@@ -2458,7 +2458,19 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
                 
             if not res.ok:
                 print(f"[TG直发核心网关报错]: {res.text}")
-                raise HTTPException(status_code=502, detail=f"Telegram 渠道投递失败: {res.text}")
+                
+                # 🎯【核心整改】：尝试解析 TG 官方返回的干净的报错 description
+                try:
+                    res_err_json = res.json()
+                    tg_description = res_err_json.get("description", res.text)
+                except:
+                    tg_description = res.text
+                
+                # 抛出异常，将干净的描述通过 detail 传给前端
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Telegram 拒绝投递: {tg_description}"
+                )
                 
             print(f"[直发成功] 卡片已成功穿透直发到目标渠道: {target_chat_id}")
             
