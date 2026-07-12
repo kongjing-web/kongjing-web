@@ -1841,7 +1841,7 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
                 type="text"
                 value={targetChatId}
                 onChange={(e) => setTargetChatId(e.target.value)}
-                placeholder="@my_channel 或 -100xxxxxx"
+                placeholder="@my_channel / -100xxxxxx"
                 className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 outline-none focus:border-emerald-500 focus:bg-white transition-all"
               />
             </div>
