@@ -93,6 +93,7 @@ const resources = {
       "Telegram 拒绝投递: Bad Request: chat not found": "投递失败：找不到该群组或频道，请检查 ID 或用户名是否填写正确。",
       "Telegram 拒绝投递: Bad Request: need administrator rights in the channel": "投递失败：Bot 在该频道中不是管理员，请先提升其为管理员并赋予发帖权限。",
       "Telegram 拒绝投递: Forbidden: bot was kicked from the channel/group chat": "投递失败：Bot 已被该渠道踢出。",
+      "Telegram 拒绝投递: Forbidden: bot is not a member of the channel chat": "投递失败：机器人不在此频道中，请先将机器人拉进该频道。",
 
       // === admin 后台管理模块 ===
       admin_dashboard_title: "全局管理后台",
@@ -358,6 +359,7 @@ const resources = {
       "Telegram 拒绝投递: Bad Request: chat not found": "Delivery failed: Chat not found. Please check if the ID or username is entered correctly.",
       "Telegram 拒绝投递: Bad Request: need administrator rights in the channel": "Delivery failed: The bot is not an administrator in this channel. Please promote it and grant posting permissions first.",
       "Telegram 拒绝投递: Forbidden: bot was kicked from the channel/group chat": "Delivery failed: The bot has been kicked from this channel or group.",      
+      "Telegram 拒绝投递: Forbidden: bot is not a member of the channel chat": "Delivery failed: The bot is not a member of this channel. Please add it to the channel first.",
 
       // === admin 后台管理模块 ===
       admin_dashboard_title: "Global Admin Dashboard",
