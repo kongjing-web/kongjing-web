@@ -2637,92 +2637,98 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   };
 
   const handleMenuActionById = (e, actionId) => {
-      // 1. 彻底锁住事件，不让移动端点击破坏当前的文字选区
-      e.preventDefault(); 
-      e.stopPropagation();
-      if (!editor) return;
+    // 1. 彻底锁住事件，不让移动端点击破坏当前的文字选区
+    e.preventDefault(); 
+    e.stopPropagation();
+    if (!editor) return;
 
-      const { from, to } = editor.state.selection;
+    // 🛠️ 修复点：在这里精准拿到 from 和 to，取消对未定义变量 empty 的依赖
+    const { from, to } = editor.state.selection;
+    const hasSelection = from !== to; // 只要起点和终点不相等，就说明精准选中了文字
 
-      // 2. 所有富文本命令均去掉了 .focus()，直接对当前保留的选区生效
-      switch (actionId) {
-        case 'bold': editor.chain().toggleBold().run(); break;
-        case 'italic': editor.chain().toggleItalic().run(); break;
-        case 'underline': editor.chain().toggleUnderline().run(); break;
-        case 'strike': editor.chain().toggleStrike().run(); break;
-        case 'quote': 
-          if (editor.isActive('blockquote', { collapsible: false })) {
-            editor.chain().unsetBlockquote().run();
+    // 2. 所有富文本命令均去掉了 .focus()，直接对当前保留的选区生效
+    switch (actionId) {
+      case 'bold': editor.chain().toggleBold().run(); break;
+      case 'italic': editor.chain().toggleItalic().run(); break;
+      case 'underline': editor.chain().toggleUnderline().run(); break;
+      case 'strike': editor.chain().toggleStrike().run(); break;
+      
+      case 'quote': 
+        if (editor.isActive('blockquote', { collapsible: false })) {
+          editor.chain().unsetBlockquote().run();
+        } else {
+          if (hasSelection) {
+            // 1. 如果用户精准选中的是一小段字，提取选中的纯文本
+            const selectedText = editor.state.doc.textBetween(from, to, " ");
+            // 2. 用一个独立的 blockquote 块直接替换并插在这个位置，实现精准切片隔离
+            editor.chain().deleteSelection().insertContent({
+              type: 'blockquote',
+              attrs: { collapsible: false },
+              content: [{ type: 'text', text: selectedText }]
+            }).run();
           } else {
-            if (!empty && from !== to) {
-              // 1. 如果用户精准选中的是一小段字，提取选中的纯文本/HTML
-              const selectedText = editor.state.doc.textBetween(from, to, " ");
-              // 2. 用一个独立的 blockquote 块直接替换并插在这个位置，实现精准切片隔离
-              editor.chain().deleteSelection().insertContent({
-                type: 'blockquote',
-                attrs: { collapsible: false },
-                content: [{ type: 'text', text: selectedText }]
-              }).run();
-            } else {
-              // 如果没有选文字，则采用默认的整行转换
-              editor.chain().setBlockquote({ collapsible: false }).run();
-            }
+            // 如果没有选文字，则采用默认的整行转换
+            editor.chain().setBlockquote({ collapsible: false }).run();
           }
-          break;
-        case 'collapsible_quote':
-          if (editor.isActive('blockquote', { collapsible: true })) {
-            editor.chain().unsetBlockquote().run();
+        }
+        break;
+
+      case 'collapsible_quote':
+        if (editor.isActive('blockquote', { collapsible: true })) {
+          editor.chain().unsetBlockquote().run();
+        } else {
+          if (hasSelection) {
+            // 1. 提取用户选中的那一小段文字
+            const selectedText = editor.state.doc.textBetween(from, to, " ");
+            // 2. 强行将其隔离生成带折叠属性的块
+            editor.chain().deleteSelection().insertContent({
+              type: 'blockquote',
+              attrs: { collapsible: true },
+              content: [{ type: 'text', text: selectedText }]
+            }).run();
           } else {
-            if (!empty && from !== to) {
-              // 1. 提取用户选中的那一小段文字
-              const selectedText = editor.state.doc.textBetween(from, to, " ");
-              // 2. 强行将其隔离生成带折叠属性的块，不让它连累上下文没有被选中的文字
-              editor.chain().deleteSelection().insertContent({
-                type: 'blockquote',
-                attrs: { collapsible: true },
-                content: [{ type: 'text', text: selectedText }]
-              }).run();
-            } else {
-              editor.chain().setBlockquote({ collapsible: true }).run();
-            }
+            editor.chain().setBlockquote({ collapsible: true }).run();
           }
-          break;
-        case 'code_block': 
-          if (editor.isActive('codeBlock')) {
+        }
+        break;
+
+      case 'code_block': 
+        if (editor.isActive('codeBlock')) {
+          editor.chain().toggleCodeBlock().run();
+        } else {
+          if (hasSelection) {
+            // 1. 提取用户用蓝色高亮精准圈选的那一小段纯文本
+            const selectedText = editor.state.doc.textBetween(from, to, "\n");
+            // 2. 局部切片，将选中的文本独立替换为高亮代码块节点
+            editor.chain().deleteSelection().insertContent({
+              type: 'codeBlock',
+              content: [{ type: 'text', text: selectedText }]
+            }).run();
+          } else {
+            // 如果没有选文字，则采用默认的整行/整段转换
             editor.chain().toggleCodeBlock().run();
-          } else {
-            if (!empty && from !== to) {
-              // 1. 提取用户用蓝色高亮精准圈选的那一小段纯文本
-              const selectedText = editor.state.doc.textBetween(from, to, "\n");
-              // 2. 局部切片，将选中的文本独立替换为高亮代码块节点
-              editor.chain().deleteSelection().insertContent({
-                type: 'codeBlock',
-                content: [{ type: 'text', text: selectedText }]
-              }).run();
-            } else {
-              // 如果没有选文字，则采用默认的整行/整段转换
-              editor.chain().toggleCodeBlock().run();
-            }
           }
-          break;
-        case 'copy': editor.chain().toggleCode().run(); break;
-        case 'spoiler': editor.chain().toggleMark('spoiler').run(); break;
-        case 'clear': editor.chain().unsetAllMarks().clearNodes().run(); break;
-        case 'emoji': setMenuView('emoji'); break;
-        case 'custom_emoji': setMenuView('custom_emoji'); break;
-        case 'link':
-          if (from === to) { 
-            alert('请先在编辑器中选中一段文字，再插入内嵌链接');
-            return;
-          }
-          setMenuView('link'); break;
-        case 'button': setMenuView('grid'); break;
-        case 'external': setMenuView('grid'); break;
-        case 'undo': editor.chain().undo().run(); break;
-        case 'redo': editor.chain().redo().run(); break;
-        default: break;
-      }
-    };
+        }
+        break;
+
+      case 'copy': editor.chain().toggleCode().run(); break;
+      case 'spoiler': editor.chain().toggleMark('spoiler').run(); break;
+      case 'clear': editor.chain().unsetAllMarks().clearNodes().run(); break;
+      case 'emoji': setMenuView('emoji'); break;
+      case 'custom_emoji': setMenuView('custom_emoji'); break;
+      case 'link':
+        if (!hasSelection) { 
+          alert('请先在编辑器中选中一段文字，再插入内嵌链接');
+          return;
+        }
+        setMenuView('link'); break;
+      case 'button': setMenuView('grid'); break;
+      case 'external': setMenuView('grid'); break;
+      case 'undo': editor.chain().undo().run(); break;
+      case 'redo': editor.chain().redo().run(); break;
+      default: break;
+    }
+  };
 
   const handleInsertEmoji = (e, emoji) => {
     e.preventDefault(); e.stopPropagation();
