@@ -2617,50 +2617,54 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   };
 
   const handleMenuActionById = (e, actionId) => {
-    e.preventDefault(); e.stopPropagation();
-    if (!editor) return;
-    const { from, to } = editor.state.selection;
+      // 1. 彻底锁住事件，不让移动端点击破坏当前的文字选区
+      e.preventDefault(); 
+      e.stopPropagation();
+      if (!editor) return;
 
-    switch (actionId) {
-      case 'bold': editor.chain().toggleBold().run(); break;
-      case 'italic': editor.chain().toggleItalic().run(); break;
-      case 'underline': editor.chain().toggleUnderline().run(); break;
-      case 'strike': editor.chain().toggleStrike().run(); break;
-      case 'quote': 
-        if (editor.isActive('blockquote', { collapsible: false })) {
-          editor.chain().focus().unsetBlockquote().run();
-        } else {
-          editor.chain().focus().setBlockquote({ collapsible: false }).run();
-        }
-        break;
-      case 'collapsible_quote':
-        if (editor.isActive('blockquote', { collapsible: true })) {
-          editor.chain().focus().unsetBlockquote().run();
-        } else {
-          editor.chain().focus().setBlockquote({ collapsible: true }).run();
-        }
-        break;
-      case 'code_block': 
-        editor.chain().focus().toggleCodeBlock().run(); 
-        break;
-      case 'copy': editor.chain().focus().toggleCode().run(); break;
-      case 'spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
-      case 'clear': editor.chain().unsetAllMarks().clearNodes().run(); break;
-      case 'emoji': setMenuView('emoji'); break;
-      case 'custom_emoji': setMenuView('custom_emoji'); break;
-      case 'link':
-        if (from === to) { 
-          alert('请先在编辑器中选中一段文字，再插入内嵌链接');
-          return;
-        }
-        setMenuView('link'); break;
-      case 'button': setMenuView('grid'); break;
-      case 'external': setMenuView('grid'); break;
-      case 'undo': editor.chain().undo().run(); break;
-      case 'redo': editor.chain().redo().run(); break;
-      default: break;
-    }
-  };
+      const { from, to } = editor.state.selection;
+
+      // 2. 所有富文本命令均去掉了 .focus()，直接对当前保留的选区生效
+      switch (actionId) {
+        case 'bold': editor.chain().toggleBold().run(); break;
+        case 'italic': editor.chain().toggleItalic().run(); break;
+        case 'underline': editor.chain().toggleUnderline().run(); break;
+        case 'strike': editor.chain().toggleStrike().run(); break;
+        case 'quote': 
+          if (editor.isActive('blockquote', { collapsible: false })) {
+            editor.chain().unsetBlockquote().run();
+          } else {
+            editor.chain().setBlockquote({ collapsible: false }).run();
+          }
+          break;
+        case 'collapsible_quote':
+          if (editor.isActive('blockquote', { collapsible: true })) {
+            editor.chain().unsetBlockquote().run();
+          } else {
+            editor.chain().setBlockquote({ collapsible: true }).run();
+          }
+          break;
+        case 'code_block': 
+          editor.chain().toggleCodeBlock().run(); 
+          break;
+        case 'copy': editor.chain().toggleCode().run(); break;
+        case 'spoiler': editor.chain().toggleMark('spoiler').run(); break;
+        case 'clear': editor.chain().unsetAllMarks().clearNodes().run(); break;
+        case 'emoji': setMenuView('emoji'); break;
+        case 'custom_emoji': setMenuView('custom_emoji'); break;
+        case 'link':
+          if (from === to) { 
+            alert('请先在编辑器中选中一段文字，再插入内嵌链接');
+            return;
+          }
+          setMenuView('link'); break;
+        case 'button': setMenuView('grid'); break;
+        case 'external': setMenuView('grid'); break;
+        case 'undo': editor.chain().undo().run(); break;
+        case 'redo': editor.chain().redo().run(); break;
+        default: break;
+      }
+    };
 
   const handleInsertEmoji = (e, emoji) => {
     e.preventDefault(); e.stopPropagation();
@@ -2880,6 +2884,7 @@ return (
                 {menuItems.map((item, index) => (
                   <button
                     key={index}
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={(e) => handleMenuActionById(e, item.id)}
                     className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all active:scale-90 ${
                       isMenuItemActive(item) ? 'bg-blue-50 text-blue-600 font-bold' : 'hover:bg-gray-50 text-gray-600'
