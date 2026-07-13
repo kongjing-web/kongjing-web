@@ -545,7 +545,7 @@ export default function App() {
       console.error("请求失败:", error);
       
       // 🛠️ 修复问题二：斩断危险的本地降级轨，直接弹窗报警
-      alert("❌ 保存失败：网络连接异常或服务器超时！请检查网络后重试。");
+      alert(t('editor_save_network_error_alert'));
       
       // 【关键改动】这里不去切换当前页面，不清除选中卡片，让用户留在 EditorScreen 
       // 这样用户的劳动成果（写了一大堆的文本和按钮）不会丢失，网络好了可以重新点“保存”

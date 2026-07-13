@@ -2502,7 +2502,7 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
                 # 抛出异常，将干净的描述通过 detail 传给前端
                 raise HTTPException(
                     status_code=400, 
-                    detail=f"Telegram 拒绝投递: {tg_description}"
+                    detail=f"Telegram delivery failed: {tg_description}"
                 )
                 
             print(f"[直发成功] 卡片已成功穿透直发到目标渠道: {target_chat_id}")

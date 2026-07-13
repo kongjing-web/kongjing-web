@@ -97,11 +97,12 @@ const resources = {
       success_direct_published: "卡片已成功直接投递到您的目标渠道！",
       success_inline_activated: "内联模式已成功激活，您可以在任意群组或频道中使用 @{{username}} 进行卡片发布了！",   
 
-      "Telegram 拒绝投递: Forbidden: bot can't initiate conversation with a user": "投递失败：目标用户未激活 Bot，请让他先在 TG 中点击 Start 按钮。",
-      "Telegram 拒绝投递: Bad Request: chat not found": "投递失败：找不到该群组或频道，请检查 ID 或用户名是否填写正确。",
-      "Telegram 拒绝投递: Bad Request: need administrator rights in the channel": "投递失败：Bot 在该频道中不是管理员，请先提升其为管理员并赋予发帖权限。",
-      "Telegram 拒绝投递: Forbidden: bot was kicked from the channel/group chat": "投递失败：Bot 已被该渠道踢出。",
-      "Telegram 拒绝投递: Forbidden: bot is not a member of the channel chat": "投递失败：机器人不在此频道中，请先将机器人拉进该频道。",
+      "Telegram delivery failed: Forbidden: bot can't initiate conversation with a user": "投递失败：目标用户未激活 Bot，请让他先在 TG 中点击 Start 按钮。",
+      "Telegram delivery failed: Bad Request: chat not found": "投递失败：找不到该群组或频道，请检查 ID 或用户名是否填写正确。",
+      "Telegram delivery failed: Bad Request: need administrator rights in the channel": "投递失败：Bot 在该频道中不是管理员，请先提升其为管理员并赋予发帖权限。",
+      "Telegram delivery failed: Forbidden: bot was kicked from the channel/group chat": "投递失败：Bot 已被该渠道踢出。",
+      "Telegram delivery failed: Forbidden: bot is not a member of the channel chat": "投递失败：机器人不在此频道中，请先将机器人拉进该频道。",
+      "Telegram delivery failed: Bad Request: BUTTON_TYPE_INVALID": "投递失败：按钮类型或参数配置无效，请检查并重新编辑卡片的按钮格式。",
 
       // === admin 后台管理模块 ===
       admin_dashboard_title: "全局管理后台",
@@ -239,6 +240,7 @@ const resources = {
       editor_search_emoji_placeholder: "搜索系统表情...",
       editor_my_custom_emojis: "我的专属表情库",
       editor_custom_emoji_tip: "💡 请直接在 TG 客户端将包含 Premium 或自定义表情的消息发送给我们的 Bot，即可在此处自动同步和录入专属表情库。",
+      editor_save_network_error_alert: "❌ 保存失败：网络连接异常或服务器超时！请检查网络后重试。",    
 
       // === analytics 数据分析模块 ===
       analytics_title: "卡片数据分析",
@@ -450,11 +452,12 @@ const resources = {
       success_direct_published: "Card has been successfully delivered directly to your target channel!",
       success_inline_activated: "Inline mode successfully activated! You can now use @{{username}} in any group or channel to publish cards!",      
 
-      "Telegram 拒绝投递: Forbidden: bot can't initiate conversation with a user": "Delivery failed: The target user has not activated the bot. Please ask them to click 'Start' in the bot first.",
-      "Telegram 拒绝投递: Bad Request: chat not found": "Delivery failed: Chat not found. Please check if the ID or username is entered correctly.",
-      "Telegram 拒绝投递: Bad Request: need administrator rights in the channel": "Delivery failed: The bot is not an administrator in this channel. Please promote it and grant posting permissions first.",
-      "Telegram 拒绝投递: Forbidden: bot was kicked from the channel/group chat": "Delivery failed: The bot has been kicked from this channel or group.",      
-      "Telegram 拒绝投递: Forbidden: bot is not a member of the channel chat": "Delivery failed: The bot is not a member of this channel. Please add it to the channel first.",
+      "Telegram delivery failed: Forbidden: bot can't initiate conversation with a user": "Delivery failed: The target user has not activated the bot. Please ask them to click 'Start' in the bot first.",
+      "Telegram delivery failed: Bad Request: chat not found": "Delivery failed: Chat not found. Please check if the ID or username is entered correctly.",
+      "Telegram delivery failed: Bad Request: need administrator rights in the channel": "Delivery failed: The bot is not an administrator in this channel. Please promote it and grant posting permissions first.",
+      "Telegram delivery failed: Forbidden: bot was kicked from the channel/group chat": "Delivery failed: The bot has been kicked from this channel or group.",      
+      "Telegram delivery failed: Forbidden: bot is not a member of the channel chat": "Delivery failed: The bot is not a member of this channel. Please add it to the channel first.",
+      "Telegram delivery failed: Bad Request: BUTTON_TYPE_INVALID": "Delivery failed: Invalid button type or parameter configuration. Please check and re-edit the card's button format.",
 
       // === admin 后台管理模块 ===
       admin_dashboard_title: "Global Admin Dashboard",
@@ -592,6 +595,7 @@ const resources = {
       editor_search_emoji_placeholder: "Search emojis...",
       editor_my_custom_emojis: "My Exclusive Emojis",
       editor_custom_emoji_tip: "💡 Send messages with Premium or custom emojis directly to our Bot in Telegram to automatically sync and populate your exclusive emoji vault here.",
+      editor_save_network_error_alert: "❌ Save failed: Network error or server timeout! Please check your connection and try again.",
 
       // === analytics 数据分析模块 ===
       analytics_title: "Card Analytics",
