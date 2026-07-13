@@ -2654,18 +2654,56 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
           if (editor.isActive('blockquote', { collapsible: false })) {
             editor.chain().unsetBlockquote().run();
           } else {
-            editor.chain().setBlockquote({ collapsible: false }).run();
+            if (!empty && from !== to) {
+              // 1. 如果用户精准选中的是一小段字，提取选中的纯文本/HTML
+              const selectedText = editor.state.doc.textBetween(from, to, " ");
+              // 2. 用一个独立的 blockquote 块直接替换并插在这个位置，实现精准切片隔离
+              editor.chain().deleteSelection().insertContent({
+                type: 'blockquote',
+                attrs: { collapsible: false },
+                content: [{ type: 'text', text: selectedText }]
+              }).run();
+            } else {
+              // 如果没有选文字，则采用默认的整行转换
+              editor.chain().setBlockquote({ collapsible: false }).run();
+            }
           }
           break;
         case 'collapsible_quote':
           if (editor.isActive('blockquote', { collapsible: true })) {
             editor.chain().unsetBlockquote().run();
           } else {
-            editor.chain().setBlockquote({ collapsible: true }).run();
+            if (!empty && from !== to) {
+              // 1. 提取用户选中的那一小段文字
+              const selectedText = editor.state.doc.textBetween(from, to, " ");
+              // 2. 强行将其隔离生成带折叠属性的块，不让它连累上下文没有被选中的文字
+              editor.chain().deleteSelection().insertContent({
+                type: 'blockquote',
+                attrs: { collapsible: true },
+                content: [{ type: 'text', text: selectedText }]
+              }).run();
+            } else {
+              editor.chain().setBlockquote({ collapsible: true }).run();
+            }
           }
           break;
         case 'code_block': 
-          editor.chain().toggleCodeBlock().run(); 
+          if (editor.isActive('codeBlock')) {
+            editor.chain().toggleCodeBlock().run();
+          } else {
+            if (!empty && from !== to) {
+              // 1. 提取用户用蓝色高亮精准圈选的那一小段纯文本
+              const selectedText = editor.state.doc.textBetween(from, to, "\n");
+              // 2. 局部切片，将选中的文本独立替换为高亮代码块节点
+              editor.chain().deleteSelection().insertContent({
+                type: 'codeBlock',
+                content: [{ type: 'text', text: selectedText }]
+              }).run();
+            } else {
+              // 如果没有选文字，则采用默认的整行/整段转换
+              editor.chain().toggleCodeBlock().run();
+            }
+          }
           break;
         case 'copy': editor.chain().toggleCode().run(); break;
         case 'spoiler': editor.chain().toggleMark('spoiler').run(); break;
