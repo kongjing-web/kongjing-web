@@ -2803,10 +2803,10 @@ return (
                   const btnType = detectButtonType(btn);
                   const typeMeta = {
                     url: { icon: '🔗', label: t('editor_type_url') },
-                    web_app: { icon: '📱', label: t('editor_type_webapp') },
-                    callback: { icon: '⚡', label: t('editor_type_callback') },
+                    
+                    
                     switch: { icon: '📣', label: t('editor_type_switch') },
-                    pay: { icon: '💳', label: t('editor_type_pay') },
+                    
                   }[btnType] || { icon: '🔗', label: t('editor_type_url') };
 
                   return (
@@ -3005,11 +3005,11 @@ return (
               <label className="block text-xs font-bold text-gray-500 mb-1.5">{t('editor_btn_type')}</label>
               <select value={btnDraft.btnType} onChange={(e) => setBtnDraft({ ...btnDraft, btnType: e.target.value, value: '' })} className="w-full border rounded-xl px-3 py-2 text-xs outline-none bg-slate-50 focus:border-blue-500 font-medium">
                 <option value="url">{t('editor_btn_type_url')}</option>
-                <option value="web_app">{t('editor_btn_type_webapp')}</option>
+                
                 <option value="share">{t('editor_btn_type_share')}</option>
-                <option value="callback">{t('editor_btn_type_callback')}</option>
+                
                 <option value="switch">{t('editor_btn_type_switch')}</option>
-                <option value="pay">{t('editor_btn_type_pay')}</option>
+                
               </select>
             </div>
 

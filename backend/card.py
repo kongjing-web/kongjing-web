@@ -465,11 +465,19 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
     except:
         buttons_data = [] 
 
+    print(f"\n[调试 - 内联模式] 🛠️ 正在清洗按钮。原始 buttons_raw 长度: {len(buttons_raw or '')}，解析后的原始 JSON 数据:")
+    print(json.dumps(buttons_data, ensure_ascii=False, indent=2))
+
     try:
         clean_keyboard = smart_clean_inline_keyboard(buttons_data, card_id)
+         # 👇 新增：打印清洗后、提交给 Telegram 之前的最终按钮结构
+        print("[调试 - 内联模式] ✅ 清洗后的最终 inline_keyboard 结构 (准备提交给 TG):")
+        print(json.dumps(clean_keyboard, ensure_ascii=False, indent=2))
+        print("-" * 50 + "\n")       
         reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
-    except:
-        reply_markup = None 
+    except Exception as btn_err:
+        print(f"[调试 - 内联模式] ❌ 按钮清洗期间发生异常: {btn_err}")
+        reply_markup = None
 
     clean_html = sanitize_for_telegram((content or "").strip())
     limit = 1024 if has_media else 4096
@@ -583,10 +591,9 @@ def handle_tg_inline_query(update_data: dict, tenant_id: Optional[str] = None):
         
         if not res.ok and ("parse" in res.text.lower() or "entity" in res.text.lower() or "entities" in res.text.lower()):
             print(f"[⚠️ HTML格式自愈触发] 依旧有未闭合或非法标签，正在启动免解析无痕降级重试...")
-            if "parse_mode" in inline_result:
-                inline_result["parse_mode"] = None
-            if "input_message_content" in inline_result and "parse_mode" in inline_result["input_message_content"]:
-                inline_result["input_message_content"]["parse_mode"] = None
+            inline_result.pop("parse_mode", None)
+            if "input_message_content" in inline_result:
+                inline_result["input_message_content"].pop("parse_mode", None)
             
             payload["results"] = [inline_result]
             res = requests.post(
@@ -711,7 +718,7 @@ async def telegram_support_webhook_router(request: Request, background_tasks: Ba
                 welcome_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
                 await run_in_threadpool(requests.post, welcome_url, json={
                     "chat_id": user_id,
-                    "text": "KongJing System · Customer Support*\n\nHello! Please send your questions or cooperation inquiries directly here. Our technical team will communicate with you directly through this window.",
+                    "text": "*KongJing System · Customer Support*\n\nHello! Please send your questions or cooperation inquiries directly here. Our technical team will communicate with you directly through this window.",
                     "parse_mode": "Markdown"
                 }, timeout=3)
                 return {"status": "success"}
@@ -2409,10 +2416,20 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
             buttons_data = json.loads(buttons_raw or "[]")
         except:
             buttons_data = []
+
+        # 👇 新增：直发模式原始数据打印
+        print(f"\n[调试 - 直发模式] 🛠️ 正在清洗按钮。解析后的原始 JSON 数据:")
+        print(json.dumps(buttons_data, ensure_ascii=False, indent=2))            
         try:
             clean_keyboard = smart_clean_inline_keyboard(buttons_data, card_id)
+            # 👇 新增：直发模式清洗后数据打印
+            print("[调试 - 直发模式] ✅ 清洗后的最终 inline_keyboard 结构 (准备提交给 TG):")
+            print(json.dumps(clean_keyboard, ensure_ascii=False, indent=2))
+            print("-" * 50 + "\n")
+
             reply_markup = {"inline_keyboard": clean_keyboard} if clean_keyboard else None
-        except:
+        except Exception as btn_err:
+            print(f"[调试 - 直发模式] ❌ 按钮清洗期间发生异常: {btn_err}")
             reply_markup = None
 
         # 3. 📝 文本清洗与字数截断
@@ -2465,8 +2482,7 @@ def publish_card_with_tg_cache_and_quota(data: dict, current_user: dict = Depend
             
             if not res.ok and ("parse" in res.text.lower() or "entity" in res.text.lower() or "entities" in res.text.lower()):
                 print(f"[⚠️ 直发HTML自愈] 检测到排版引发语法崩溃，启动免解析无痕降级直发...")
-                if "parse_mode" in payload:
-                    payload["parse_mode"] = None
+                payload.pop("parse_mode", None)
                 res = requests.post(
                     f"https://api.telegram.org/bot{active_bot_token}/{endpoint}",
                     json=payload,
