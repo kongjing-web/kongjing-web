@@ -257,7 +257,7 @@ const resources = {
       "卡片不存在或已删除": "卡片不存在或已删除",
       "系统数据加载失败": "系统数据加载失败",
       "点击直接发布此卡片内容": "点击直接发布此卡片内容",
-      "🌌 *空境系统 · 客服中心*\n\n您好！请直接在此处发送您遇到的问题或合作意向，技术团队将直接通过此窗口与您对话。": "🌌 *空境系统 · 客服中心*\n\n您好！请直接在此处发送您遇到的问题或合作意向，技术团队将直接通过此窗口与您对话。",
+      
       "Webhook中央网关异常，请稍后重试": "Webhook中央网关异常，请稍后重试",
       "请重新从 Telegram 打开小程序以完成登录授权": "请重新从 Telegram 打开小程序以完成登录授权",
       "授权身份 data 片段严重残缺": "授权身份数据片段严重残缺",
@@ -610,7 +610,7 @@ const resources = {
       "卡片不存在或已删除": "Card does not exist or has been deleted",
       "系统数据加载失败": "Failed to load system data",
       "点击直接发布此卡片内容": "Click to publish this card directly",
-      "🌌 *空境系统 · 客服中心*\n\n您好！请直接在此处发送您遇到的问题或合作意向，技术团队将直接通过此窗口与您对话。": "🌌 *KongJing System · Customer Support*\n\nHello! Please send your questions or cooperation inquiries directly here. Our technical team will communicate with you directly through this window.",
+       
       "Webhook中央网关异常，请稍后重试": "Webhook central gateway exception. Please try again later.",
       "请重新从 Telegram 打开小程序以完成登录授权": "Please reopen the Mini App from Telegram to complete login authorization.",
       "授权身份 data 片段严重残缺": "Authorization identity data fragment is severely incomplete",

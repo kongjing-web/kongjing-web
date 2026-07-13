@@ -711,7 +711,7 @@ async def telegram_support_webhook_router(request: Request, background_tasks: Ba
                 welcome_url = f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage"
                 await run_in_threadpool(requests.post, welcome_url, json={
                     "chat_id": user_id,
-                    "text": "🌌 *空境系统 · 客服中心*\n\n您好！请直接在此处发送您遇到的问题或合作意向，技术团队将直接通过此窗口与您对话。",
+                    "text": "KongJing System · Customer Support*\n\nHello! Please send your questions or cooperation inquiries directly here. Our technical team will communicate with you directly through this window.",
                     "parse_mode": "Markdown"
                 }, timeout=3)
                 return {"status": "success"}

@@ -3189,7 +3189,7 @@ function AnalyticsScreen({ card, onBack }) {
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
         {/* 卡片信息 */}
         <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-400 mb-1">{t('analytics_analyzing_card')}</p >
+          <p className="text-xs text-gray-400 mb-1">{t('analytics_analyzing')}</p >
           <h2 className="text-base font-bold text-gray-800 line-clamp-1">{card.title}</h2>
         </div>
 
