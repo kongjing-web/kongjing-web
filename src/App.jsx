@@ -2990,8 +2990,13 @@ return (
             onClick={() => { 
               setShowMenu(true);
               setMenuView('main');
+              
+              // 🛠️ 修复点：删除 editor.commands.blur(); 改用隐藏输入法而不擦除选区的原生手段
               if (editor) {
-                editor.commands.blur();
+                // 强制让当前激活的 DOM 节点（即键盘依附的输入框）主动收回键盘，但绝不主动清空 tiptap 的 selection 状态
+                if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                  document.activeElement.blur();
+                }
               }
             }} 
             className="pointer-events-auto bg-slate-900/95 backdrop-blur-xs text-white py-1.5 px-4 rounded-full flex items-center justify-center gap-1.5 shadow-xl border border-slate-800 active:scale-95 transition-transform font-bold text-xs whitespace-nowrap"
