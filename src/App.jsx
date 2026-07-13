@@ -281,6 +281,26 @@ const editorStyles = `
     border-radius: 4px !important;
     display: inline-block !important;
   }
+
+  /* ==========================================
+     🔥 新增：锁定移动端失去焦点时的文字选中高亮颜色
+     ========================================== */
+  /* 1. 编辑器聚焦时保持标准高亮（天蓝色） */
+  .ProseMirror ::selection {
+    background-color: rgba(0, 136, 204, 0.25) !important;
+    color: inherit !important;
+  }
+
+  /* 2. 编辑器失去焦点，但点击下方菜单保留选区时，强行留住高亮颜色，不让系统将它变白或变灰 */
+  .ProseMirror:not(:focus) ::selection {
+    background-color: rgba(0, 136, 204, 0.3) !important; /* 稍微加深 5% 透明度，抵消手机系统的强制淡化 */
+    color: inherit !important;
+  }
+
+  /* 3. 针对部分移动端浏览器内核的后代选择器补强 */
+  .ProseMirror *::selection {
+    background-color: rgba(0, 136, 204, 0.25) !important;
+  }
 `;
 
 export default function App() {
