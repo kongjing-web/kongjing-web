@@ -2628,19 +2628,25 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       case 'strike': editor.chain().focus().toggleStrike().run(); break;
       case 'quote': 
         if (editor.isActive('blockquote', { collapsible: false })) {
-          editor.chain().focus().unsetBlockquote().run();
+          // 如果当前已经是这个普通引用，则只对选中的块取消引用
+          editor.chain().focus().lift('blockquote').run();
         } else {
-          editor.chain().focus().setBlockquote({ collapsible: false }).run();
+          // 💡 关键：先用 lift 清理可能存在的其他块冲突，再用 wrapIn 只包裹当前选区
+          editor.chain().focus().lift('blockquote').wrapIn('blockquote', { collapsible: false }).run();
         }
         break;
       case 'collapsible_quote':
         if (editor.isActive('blockquote', { collapsible: true })) {
-          editor.chain().focus().unsetBlockquote().run();
+          editor.chain().focus().lift('blockquote').run();
         } else {
-          editor.chain().focus().setBlockquote({ collapsible: true }).run();
+          editor.chain().focus().lift('blockquote').wrapIn('blockquote', { collapsible: true }).run();
         }
         break;
-      case 'code_block': editor.chain().focus().toggleCodeBlock().run(); break;
+      case 'code_block': 
+        // 💡 很多时候 toggleCodeBlock 会扩大范围，可以用原生的 setNode 或 toggleNode 配合选区
+        // 确保它只把当前选中的行块变成 codeBlock，而不会波及到其他不相干的文本段落
+        editor.chain().focus().toggleCodeBlock().run(); 
+        break;
       case 'copy': editor.chain().focus().toggleCode().run(); break;
       case 'spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
       case 'clear': editor.chain().focus().unsetAllMarks().clearNodes().run(); break;
