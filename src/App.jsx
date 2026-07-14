@@ -281,26 +281,6 @@ const editorStyles = `
     border-radius: 4px !important;
     display: inline-block !important;
   }
-
-  /* ==========================================
-     🔥 新增：锁定移动端失去焦点时的文字选中高亮颜色
-     ========================================== */
-  /* 1. 编辑器聚焦时保持标准高亮（天蓝色） */
-  .ProseMirror ::selection {
-    background-color: rgba(0, 136, 204, 0.25) !important;
-    color: inherit !important;
-  }
-
-  /* 2. 编辑器失去焦点，但点击下方菜单保留选区时，强行留住高亮颜色，不让系统将它变白或变灰 */
-  .ProseMirror:not(:focus) ::selection {
-    background-color: rgba(0, 136, 204, 0.3) !important; /* 稍微加深 5% 透明度，抵消手机系统的强制淡化 */
-    color: inherit !important;
-  }
-
-  /* 3. 针对部分移动端浏览器内核的后代选择器补强 */
-  .ProseMirror *::selection {
-    background-color: rgba(0, 136, 204, 0.25) !important;
-  }
 `;
 
 export default function App() {
@@ -2637,95 +2617,48 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   };
 
   const handleMenuActionById = (e, actionId) => {
-    // 1. 彻底锁住事件，不让移动端点击破坏当前的文字选区
-    e.preventDefault(); 
-    e.stopPropagation();
+    // 移除这里的 e.preventDefault()，我们挪到 DOM 元素上去更干净
     if (!editor) return;
 
-    // 🛠️ 修复点：在这里精准拿到 from 和 to，取消对未定义变量 empty 的依赖
-    const { from, to } = editor.state.selection;
-    const hasSelection = from !== to; // 只要起点和终点不相等，就说明精准选中了文字
-
-    // 2. 所有富文本命令均去掉了 .focus()，直接对当前保留的选区生效
     switch (actionId) {
-      case 'bold': editor.chain().toggleBold().run(); break;
-      case 'italic': editor.chain().toggleItalic().run(); break;
-      case 'underline': editor.chain().toggleUnderline().run(); break;
-      case 'strike': editor.chain().toggleStrike().run(); break;
-      
+      // 💡 关键：所有编辑器操作前，一律加上 .focus()，Tiptap 会自动找回最后一次的 Selection！
+      case 'bold': editor.chain().focus().toggleBold().run(); break;
+      case 'italic': editor.chain().focus().toggleItalic().run(); break;
+      case 'underline': editor.chain().focus().toggleUnderline().run(); break;
+      case 'strike': editor.chain().focus().toggleStrike().run(); break;
       case 'quote': 
         if (editor.isActive('blockquote', { collapsible: false })) {
-          editor.chain().unsetBlockquote().run();
+          editor.chain().focus().unsetBlockquote().run();
         } else {
-          if (hasSelection) {
-            // 1. 如果用户精准选中的是一小段字，提取选中的纯文本
-            const selectedText = editor.state.doc.textBetween(from, to, " ");
-            // 2. 用一个独立的 blockquote 块直接替换并插在这个位置，实现精准切片隔离
-            editor.chain().deleteSelection().insertContent({
-              type: 'blockquote',
-              attrs: { collapsible: false },
-              content: [{ type: 'text', text: selectedText }]
-            }).run();
-          } else {
-            // 如果没有选文字，则采用默认的整行转换
-            editor.chain().setBlockquote({ collapsible: false }).run();
-          }
+          editor.chain().focus().setBlockquote({ collapsible: false }).run();
         }
         break;
-
       case 'collapsible_quote':
         if (editor.isActive('blockquote', { collapsible: true })) {
-          editor.chain().unsetBlockquote().run();
+          editor.chain().focus().unsetBlockquote().run();
         } else {
-          if (hasSelection) {
-            // 1. 提取用户选中的那一小段文字
-            const selectedText = editor.state.doc.textBetween(from, to, " ");
-            // 2. 强行将其隔离生成带折叠属性的块
-            editor.chain().deleteSelection().insertContent({
-              type: 'blockquote',
-              attrs: { collapsible: true },
-              content: [{ type: 'text', text: selectedText }]
-            }).run();
-          } else {
-            editor.chain().setBlockquote({ collapsible: true }).run();
-          }
+          editor.chain().focus().setBlockquote({ collapsible: true }).run();
         }
         break;
-
-      case 'code_block': 
-        if (editor.isActive('codeBlock')) {
-          editor.chain().toggleCodeBlock().run();
-        } else {
-          if (hasSelection) {
-            // 1. 提取用户用蓝色高亮精准圈选的那一小段纯文本
-            const selectedText = editor.state.doc.textBetween(from, to, "\n");
-            // 2. 局部切片，将选中的文本独立替换为高亮代码块节点
-            editor.chain().deleteSelection().insertContent({
-              type: 'codeBlock',
-              content: [{ type: 'text', text: selectedText }]
-            }).run();
-          } else {
-            // 如果没有选文字，则采用默认的整行/整段转换
-            editor.chain().toggleCodeBlock().run();
-          }
-        }
-        break;
-
-      case 'copy': editor.chain().toggleCode().run(); break;
-      case 'spoiler': editor.chain().toggleMark('spoiler').run(); break;
-      case 'clear': editor.chain().unsetAllMarks().clearNodes().run(); break;
+      case 'code_block': editor.chain().focus().toggleCodeBlock().run(); break;
+      case 'copy': editor.chain().focus().toggleCode().run(); break;
+      case 'spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
+      case 'clear': editor.chain().focus().unsetAllMarks().clearNodes().run(); break;
+      case 'undo': editor.chain().focus().undo().run(); break;
+      case 'redo': editor.chain().focus().redo().run(); break;
+      
+      // 视图切换不需要 focus
       case 'emoji': setMenuView('emoji'); break;
       case 'custom_emoji': setMenuView('custom_emoji'); break;
       case 'link':
-        if (!hasSelection) { 
+        const { from, to } = editor.state.selection;
+        if (from === to) { 
           alert('请先在编辑器中选中一段文字，再插入内嵌链接');
           return;
         }
-        setMenuView('link'); break;
-      case 'button': setMenuView('grid'); break;
-      case 'external': setMenuView('grid'); break;
-      case 'undo': editor.chain().undo().run(); break;
-      case 'redo': editor.chain().redo().run(); break;
+        setMenuView('link'); 
+        break;
+      case 'button': case 'external': setMenuView('grid'); break;
       default: break;
     }
   };
@@ -2948,7 +2881,7 @@ return (
                 {menuItems.map((item, index) => (
                   <button
                     key={index}
-                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseDown={(e) => e.preventDefault()} 
                     onClick={(e) => handleMenuActionById(e, item.id)}
                     className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all active:scale-90 ${
                       isMenuItemActive(item) ? 'bg-blue-50 text-blue-600 font-bold' : 'hover:bg-gray-50 text-gray-600'
@@ -3034,14 +2967,7 @@ return (
             onClick={() => { 
               setShowMenu(true);
               setMenuView('main');
-              
-              // 🛠️ 修复点：删除 editor.commands.blur(); 改用隐藏输入法而不擦除选区的原生手段
-              if (editor) {
-                // 强制让当前激活的 DOM 节点（即键盘依附的输入框）主动收回键盘，但绝不主动清空 tiptap 的 selection 状态
-                if (document.activeElement && typeof document.activeElement.blur === 'function') {
-                  document.activeElement.blur();
-                }
-              }
+
             }} 
             className="pointer-events-auto bg-slate-900/95 backdrop-blur-xs text-white py-1.5 px-4 rounded-full flex items-center justify-center gap-1.5 shadow-xl border border-slate-800 active:scale-95 transition-transform font-bold text-xs whitespace-nowrap"
           >
