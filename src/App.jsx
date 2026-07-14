@@ -2617,68 +2617,70 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   };
 
   const handleMenuActionById = (e, actionId) => {
-    // 移除这里的 e.preventDefault()，我们挪到 DOM 元素上去更干净
-    if (!editor) return;
-    const { from, to } = editor.state.selection;
-
-    switch (actionId) {
-      // 💡 关键：所有编辑器操作前，一律加上 .focus()，Tiptap 会自动找回最后一次的 Selection！
-      case 'bold': editor.chain().focus().toggleBold().run(); break;
-      case 'italic': editor.chain().focus().toggleItalic().run(); break;
-      case 'underline': editor.chain().focus().toggleUnderline().run(); break;
-      case 'strike': editor.chain().focus().toggleStrike().run(); break;
-      case 'quote': 
-        if (editor.isActive('blockquote', { collapsible: false })) {
-          editor.chain().focus().lift('blockquote').run();
-        } else {
-          editor.chain()
-            .focus()
-            .setTextSelection({ from, to }) // 🎯 强行把选区锁死在刚才选中的位置，防止失焦扩散
-            .lift('blockquote')            // 清理潜在的冲突块
-            .wrapIn('blockquote', { collapsible: false })
-            .run();
-        }
-        break;
-      case 'collapsible_quote':
-        if (editor.isActive('blockquote', { collapsible: true })) {
-          editor.chain().focus().lift('blockquote').run();
-        } else {
-          editor.chain()
-            .focus()
-            .setTextSelection({ from, to }) // 🎯 强行锁死选区位置
-            .lift('blockquote')
-            .wrapIn('blockquote', { collapsible: true })
-            .run();
-        }
-        break;
-      case 'code_block': 
-        editor.chain()
-          .focus()
-          .setTextSelection({ from, to })   // 🎯 强行锁死选区位置
-          .toggleCodeBlock()
-          .run(); 
-        break;
-      case 'copy': editor.chain().focus().toggleCode().run(); break;
-      case 'spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
-      case 'clear': editor.chain().focus().unsetAllMarks().clearNodes().run(); break;
-      case 'undo': editor.chain().focus().undo().run(); break;
-      case 'redo': editor.chain().focus().redo().run(); break;
+      if (!editor) return;
       
-      // 视图切换不需要 focus
-      case 'emoji': setMenuView('emoji'); break;
-      case 'custom_emoji': setMenuView('custom_emoji'); break;
-      case 'link':
-        const { from, to } = editor.state.selection;
-        if (from === to) { 
-          alert('请先在编辑器中选中一段文字，再插入内嵌链接');
-          return;
-        }
-        setMenuView('link'); 
-        break;
-      case 'button': case 'external': setMenuView('grid'); break;
-      default: break;
-    }
-  };
+      // 💡 1. 在这里先精准捕获用户在失焦前最后的 selection 坐标
+      const { from, to } = editor.state.selection;
+
+      switch (actionId) {
+        case 'bold': editor.chain().focus().toggleBold().run(); break;
+        case 'italic': editor.chain().focus().toggleItalic().run(); break;
+        case 'underline': editor.chain().focus().toggleUnderline().run(); break;
+        case 'strike': editor.chain().focus().toggleStrike().run(); break;
+        
+        case 'quote': 
+          if (editor.isActive('blockquote', { collapsible: false })) {
+            editor.chain().focus().lift('blockquote').run();
+          } else {
+            // 💡 核心修正：移除这里的 .focus()，直接把编辑器状态强制约束在当前选择的范围内
+            editor.chain()
+              .setTextSelection({ from, to }) 
+              .lift('blockquote')            
+              .wrapIn('blockquote', { collapsible: false })
+              .run();
+          }
+          break;
+
+        case 'collapsible_quote':
+          if (editor.isActive('blockquote', { collapsible: true })) {
+            editor.chain().focus().lift('blockquote').run();
+          } else {
+            // 💡 核心修正：直接约束选区范围，不再调用带副作用的 focus()
+            editor.chain()
+              .setTextSelection({ from, to }) 
+              .lift('blockquote')
+              .wrapIn('blockquote', { collapsible: true })
+              .run();
+          }
+          break;
+
+        case 'code_block': 
+          // 💡 核心修正：直接约束选区范围
+          editor.chain()
+            .setTextSelection({ from, to })   
+            .toggleCodeBlock()
+            .run(); 
+          break;
+
+        case 'copy': editor.chain().focus().toggleCode().run(); break;
+        case 'spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
+        case 'clear': editor.chain().focus().unsetAllMarks().clearNodes().run(); break;
+        case 'undo': editor.chain().focus().undo().run(); break;
+        case 'redo': editor.chain().focus().redo().run(); break;
+        
+        case 'emoji': setMenuView('emoji'); break;
+        case 'custom_emoji': setMenuView('custom_emoji'); break;
+        case 'link':
+          if (from === to) { 
+            alert('请先在编辑器中选中一段文字，再插入内嵌链接');
+            return;
+          }
+          setMenuView('link'); 
+          break;
+        case 'button': case 'external': setMenuView('grid'); break;
+        default: break;
+      }
+    };
 
   const handleInsertEmoji = (e, emoji) => {
     e.preventDefault(); e.stopPropagation();
