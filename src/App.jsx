@@ -2628,39 +2628,52 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
         case 'underline': editor.chain().focus().toggleUnderline().run(); break;
         case 'strike': editor.chain().focus().toggleStrike().run(); break;
         
-        case 'quote': 
-          if (editor.isActive('blockquote', { collapsible: false })) {
-            editor.chain().focus().lift('blockquote').run();
-          } else {
-            // 💡 核心修正：移除这里的 .focus()，直接把编辑器状态强制约束在当前选择的范围内
-            editor.chain()
-              .setTextSelection({ from, to }) 
-              .lift('blockquote')            
-              .wrapIn('blockquote', { collapsible: false })
-              .run();
-          }
-          break;
-
-        case 'collapsible_quote':
-          if (editor.isActive('blockquote', { collapsible: true })) {
-            editor.chain().focus().lift('blockquote').run();
-          } else {
-            // 💡 核心修正：直接约束选区范围，不再调用带副作用的 focus()
-            editor.chain()
-              .setTextSelection({ from, to }) 
-              .lift('blockquote')
-              .wrapIn('blockquote', { collapsible: true })
-              .run();
-          }
-          break;
-
-        case 'code_block': 
-          // 💡 核心修正：直接约束选区范围
+      case 'quote': 
+        if (editor.isActive('blockquote', { collapsible: false })) {
+          editor.chain().focus().lift('blockquote').run();
+        } else {
+          // 💡 核心切片手术：
           editor.chain()
-            .setTextSelection({ from, to })   
-            .toggleCodeBlock()
-            .run(); 
-          break;
+            .focus()
+            .setTextSelection({ from: to, to: to })     // 先在选区尾部切一刀，把后面的文本隔离出去
+            .splitBlock()
+            .setTextSelection({ from: from, to: from }) // 再在选区头部切一刀，把前面的文本隔离出去
+            .splitBlock()
+            .setTextSelection({ from: from + 1, to: to + 1 }) // 重新精准选中被切出来的这部分中间独立块
+            .wrapIn('blockquote', { collapsible: false }) // 单独包裹它！
+            .run();
+        }
+        break;
+
+      case 'collapsible_quote':
+        if (editor.isActive('blockquote', { collapsible: true })) {
+          editor.chain().focus().lift('blockquote').run();
+        } else {
+          // 💡 同理，可折叠引用也进行头部和尾部的高精度断块切片
+          editor.chain()
+            .focus()
+            .setTextSelection({ from: to, to: to })
+            .splitBlock()
+            .setTextSelection({ from: from, to: from })
+            .splitBlock()
+            .setTextSelection({ from: from + 1, to: to + 1 })
+            .wrapIn('blockquote', { collapsible: true })
+            .run();
+        }
+        break;
+
+      case 'code_block': 
+        // 💡 多行代码块切片处理
+        editor.chain()
+          .focus()
+          .setTextSelection({ from: to, to: to })
+          .splitBlock()
+          .setTextSelection({ from: from, to: from })
+          .splitBlock()
+          .setTextSelection({ from: from + 1, to: to + 1 })
+          .setNode('codeBlock') // 强制将切出来的文本块类型转为代码块节点
+          .run(); 
+        break;
 
         case 'copy': editor.chain().focus().toggleCode().run(); break;
         case 'spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
