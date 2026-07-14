@@ -2619,6 +2619,7 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
   const handleMenuActionById = (e, actionId) => {
     // 移除这里的 e.preventDefault()，我们挪到 DOM 元素上去更干净
     if (!editor) return;
+    const { from, to } = editor.state.selection;
 
     switch (actionId) {
       // 💡 关键：所有编辑器操作前，一律加上 .focus()，Tiptap 会自动找回最后一次的 Selection！
@@ -2628,24 +2629,34 @@ function EditorScreen({ cardToEdit, onBack, onPublish }) {
       case 'strike': editor.chain().focus().toggleStrike().run(); break;
       case 'quote': 
         if (editor.isActive('blockquote', { collapsible: false })) {
-          // 如果当前已经是这个普通引用，则只对选中的块取消引用
           editor.chain().focus().lift('blockquote').run();
         } else {
-          // 💡 关键：先用 lift 清理可能存在的其他块冲突，再用 wrapIn 只包裹当前选区
-          editor.chain().focus().lift('blockquote').wrapIn('blockquote', { collapsible: false }).run();
+          editor.chain()
+            .focus()
+            .setTextSelection({ from, to }) // 🎯 强行把选区锁死在刚才选中的位置，防止失焦扩散
+            .lift('blockquote')            // 清理潜在的冲突块
+            .wrapIn('blockquote', { collapsible: false })
+            .run();
         }
         break;
       case 'collapsible_quote':
         if (editor.isActive('blockquote', { collapsible: true })) {
           editor.chain().focus().lift('blockquote').run();
         } else {
-          editor.chain().focus().lift('blockquote').wrapIn('blockquote', { collapsible: true }).run();
+          editor.chain()
+            .focus()
+            .setTextSelection({ from, to }) // 🎯 强行锁死选区位置
+            .lift('blockquote')
+            .wrapIn('blockquote', { collapsible: true })
+            .run();
         }
         break;
       case 'code_block': 
-        // 💡 很多时候 toggleCodeBlock 会扩大范围，可以用原生的 setNode 或 toggleNode 配合选区
-        // 确保它只把当前选中的行块变成 codeBlock，而不会波及到其他不相干的文本段落
-        editor.chain().focus().toggleCodeBlock().run(); 
+        editor.chain()
+          .focus()
+          .setTextSelection({ from, to })   // 🎯 强行锁死选区位置
+          .toggleCodeBlock()
+          .run(); 
         break;
       case 'copy': editor.chain().focus().toggleCode().run(); break;
       case 'spoiler': editor.chain().focus().toggleMark('spoiler').run(); break;
