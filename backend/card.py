@@ -3043,7 +3043,7 @@ async def create_invoice(data: dict, req: Request):
         payload = {
             "asset": "USDT",
             "amount": str(amount),
-            "description": f"KongJing System - {pkg_name} ({duration_days} Days)",  
+            "description": f"KJ System - {pkg_name} ({duration_days} Days) [USDT-TON Only]",  
             "hidden_message": "Thank you for your support! Your membership has been automatically extended.",
             "paid_btn_name": "callback",  
             "paid_btn_url": "https://t.me/kongjing_service_bot", 
@@ -3127,10 +3127,12 @@ async def crypto_bot_webhook(request: Request):
                 if order_row and order_row[1] == 'pending':
                     user_id = order_row[0]
                     # 安全兜底：如果老订单没有天数，默认走 7 天
-                    duration_days = order_row[2] if (len(order_row) > 2 and order_row[2]) else 7 
-                    
-                    # 1. 更新订单状态
                     duration_days = order_row[2] if (order_row and order_row[2] is not None) else 7
+
+                    cursor.execute(
+                        "UPDATE orders SET status = 'completed' WHERE order_id = %s", 
+                        (local_order_id,)
+                    )                    
                     
                     # 2. 传入动态获取到的天数，发放 VIP 权益
                     grant_vip_equity(cursor, user_id, duration_days)

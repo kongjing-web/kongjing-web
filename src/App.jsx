@@ -1379,6 +1379,27 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
     } else {
       window.open(fatherUrl, '_blank');
     }
+  };
+  
+// ==========================================
+  // 📜 唤起法务合规网页（服务条款与隐私政策）
+  // ==========================================
+  const handleOpenPrivacy = () => {
+    const url = 'https://telegra.ph/Privacy-Policy-for-KJ---Card-Editor-07-15';
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+      window.Telegram.WebApp.openLink(url); // 🚀 使用 TG 内置浏览器无缝打开
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
+  const handleOpenTerms = () => {
+    const url = 'https://telegra.ph/Terms-of-Service-for-KJ---Card-Editor-07-15';
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+      window.Telegram.WebApp.openLink(url);
+    } else {
+      window.open(url, '_blank');
+    }
   };  
 
   // ==========================================================================
@@ -1894,6 +1915,17 @@ function HomeScreen({ cards, setCards, fetchCards, currentUser, announcement, on
           </div>
         </div>
       )}
+{/* 🛡️ 底部合规页脚声明 */}
+      <div className="w-full py-6 text-center flex flex-col items-center justify-center gap-1.5 select-none opacity-40 hover:opacity-100 transition-opacity duration-300">
+        <p className="text-[9px] font-medium text-slate-400">
+          © 2026 KJ - Card Editor. All Rights Reserved.
+        </p >
+        <div className="flex items-center gap-2.5 text-[10px] font-bold text-slate-500">
+          <span onClick={handleOpenPrivacy} className="cursor-pointer hover:underline">Privacy Policy</span>
+          <span className="text-slate-300">|</span>
+          <span onClick={handleOpenTerms} className="cursor-pointer hover:underline">Terms of Service</span>
+        </div>
+      </div>      
       {gateOverlay}
 
     </div>
